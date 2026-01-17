@@ -1,0 +1,30 @@
+# dependencies
+node_modules
+
+# output
+.vitepress/dist
+.vitepress/cache
+dist
+.srcpack
+*.tgz
+
+# coverage
+coverage
+
+# logs
+*.log
+
+# env
+.env
+.env*.local
+
+# local overrides
+*.local.md
+
+# caches
+.cache
+*.tsbuildinfo
+
+# IDE/OS
+.idea
+.DS_Store
