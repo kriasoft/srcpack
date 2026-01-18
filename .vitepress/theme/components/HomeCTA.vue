@@ -21,16 +21,25 @@ function copyCommand() {
     </p>
     <div class="home-cta__command" @click="copyCommand">
       <code class="home-cta__code">{{ command }}</code>
-      <button class="home-cta__copy" :class="{ 'home-cta__copy--copied': copied }">
+      <button
+        class="home-cta__copy"
+        :class="{ 'home-cta__copy--copied': copied }"
+      >
         <span v-if="copied">Copied!</span>
         <span v-else>Copy</span>
       </button>
     </div>
     <div class="home-cta__actions">
-      <a href="/srcpack/guide/getting-started" class="home-cta__button home-cta__button--primary">
+      <a
+        href="/srcpack/guide/getting-started"
+        class="home-cta__button home-cta__button--primary"
+      >
         Read the Docs
       </a>
-      <a href="https://github.com/kriasoft/srcpack" class="home-cta__button home-cta__button--secondary">
+      <a
+        href="https://github.com/kriasoft/srcpack"
+        class="home-cta__button home-cta__button--secondary"
+      >
         View on GitHub
       </a>
     </div>

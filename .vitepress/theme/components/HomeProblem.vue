@@ -13,7 +13,8 @@ const problems = [
   {
     icon: "🌀",
     title: "Lost in the Middle",
-    description: "LLMs struggle with long contexts. Important code gets ignored.",
+    description:
+      "LLMs struggle with long contexts. Important code gets ignored.",
   },
 ];
 </script>

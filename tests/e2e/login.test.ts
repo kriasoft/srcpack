@@ -45,7 +45,10 @@ describe("login flow", () => {
   });
 
   describe("without authentication", () => {
-    test.todo("should prompt for login when upload is configured but no tokens exist", () => {});
+    test.todo(
+      "should prompt for login when upload is configured but no tokens exist",
+      () => {},
+    );
   });
 
   describe("with valid tokens", () => {
@@ -53,7 +56,10 @@ describe("login flow", () => {
   });
 
   describe("with expired tokens", () => {
-    test.todo("should refresh tokens automatically when refresh_token exists", () => {});
+    test.todo(
+      "should refresh tokens automatically when refresh_token exists",
+      () => {},
+    );
     test.todo("should prompt for login when refresh fails", () => {});
   });
 

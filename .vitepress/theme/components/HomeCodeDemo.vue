@@ -1,11 +1,13 @@
 <script setup lang="ts">
-const configExample = `bundles:
-  web:
-    include: ["app/**", "components/**"]
-  api:
-    include: ["server/**", "routes/**"]
-  db:
-    include: ["prisma/**", "migrations/**"]`;
+const configExample = `import { defineConfig } from "srcpack";
+
+export default defineConfig({
+  bundles: {
+    web: ["app/**", "components/**"],
+    api: ["server/**", "routes/**"],
+    db: ["prisma/**", "migrations/**"],
+  },
+});`;
 
 const outputExample = `# srcpack: web
 # Generated: 2025-01-17
@@ -36,7 +38,7 @@ export default function RootLayout...
     <div class="home-code-demo__grid">
       <div class="home-code-demo__block">
         <div class="home-code-demo__header">
-          <span class="home-code-demo__label">srcpack.yaml</span>
+          <span class="home-code-demo__label">srcpack.config.ts</span>
         </div>
         <pre class="home-code-demo__code"><code>{{ configExample }}</code></pre>
       </div>

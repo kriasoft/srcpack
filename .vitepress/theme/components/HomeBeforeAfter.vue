@@ -20,10 +20,17 @@ const afterItems = [
     <div class="home-before-after__grid">
       <div class="home-before-after__column home-before-after__column--before">
         <h3 class="home-before-after__heading">
-          <span class="home-before-after__badge home-before-after__badge--before">Before</span>
+          <span
+            class="home-before-after__badge home-before-after__badge--before"
+            >Before</span
+          >
         </h3>
         <ul class="home-before-after__list">
-          <li v-for="item in beforeItems" :key="item" class="home-before-after__item">
+          <li
+            v-for="item in beforeItems"
+            :key="item"
+            class="home-before-after__item"
+          >
             <span class="home-before-after__x">✕</span>
             {{ item }}
           </li>
@@ -31,10 +38,16 @@ const afterItems = [
       </div>
       <div class="home-before-after__column home-before-after__column--after">
         <h3 class="home-before-after__heading">
-          <span class="home-before-after__badge home-before-after__badge--after">After</span>
+          <span class="home-before-after__badge home-before-after__badge--after"
+            >After</span
+          >
         </h3>
         <ul class="home-before-after__list">
-          <li v-for="item in afterItems" :key="item" class="home-before-after__item">
+          <li
+            v-for="item in afterItems"
+            :key="item"
+            class="home-before-after__item"
+          >
             <span class="home-before-after__check">✓</span>
             {{ item }}
           </li>
