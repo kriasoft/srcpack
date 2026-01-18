@@ -1,0 +1,5 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://kriasoft.com/srcpack/sitemap.xml
+Sitemap: https://kriasoft.com/srcpack/llms.txt
