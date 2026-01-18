@@ -28,3 +28,6 @@ coverage
 # IDE/OS
 .idea
 .DS_Store
+
+/srcpack.config.ts
+/.srcpack/

@@ -144,7 +144,7 @@ yarn dlx srcpack login
 
 :::
 
-Opens a browser to authorize access. Tokens are stored in `~/.srcpack/credentials.json`.
+Opens a browser to authorize access. Tokens are stored in `~/.config/srcpack/credentials.json`.
 
 ## Options
 

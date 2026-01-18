@@ -1,4 +1,5 @@
 import { defineConfig } from "vitepress";
+import llmstxt from "vitepress-plugin-llms";
 
 // https://vitepress.dev/reference/site-config
 export default defineConfig({
@@ -62,6 +63,7 @@ export default defineConfig({
       {
         text: "Guide",
         items: [
+          { text: "Why Srcpack", link: "/why-srcpack" },
           { text: "Getting Started", link: "/getting-started" },
           { text: "Configuration", link: "/configuration" },
           { text: "CLI Reference", link: "/cli" },
@@ -98,5 +100,6 @@ export default defineConfig({
 
   vite: {
     publicDir: "../.vitepress/public",
+    plugins: [llmstxt()],
   },
 });

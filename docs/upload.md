@@ -128,6 +128,10 @@ yarn dlx srcpack web
 
 ## Environment Variables
 
+::: warning
+Never commit `clientId` and `clientSecret` directly in your config file. Use environment variables for shared or public repositories.
+:::
+
 For CI/CD or shared configs, use environment variables:
 
 ```ts
@@ -154,14 +158,14 @@ Once uploaded, bundles appear in your Google Drive folder. You can:
 
 ## Troubleshooting
 
-### "Access denied" error
-
+::: details "Access denied" error
 Re-run the login command to refresh authentication.
+:::
 
-### "Folder not found" error
-
+::: details "Folder not found" error
 Verify the folder ID is correct and you have write access to the folder.
+:::
 
-### Tokens expired
-
-Srcpack automatically refreshes tokens. If issues persist, delete `~/.srcpack/credentials.json` and run the login command again.
+::: details Tokens expired
+Srcpack automatically refreshes tokens. If issues persist, delete `~/.config/srcpack/credentials.json` and run the login command again.
+:::

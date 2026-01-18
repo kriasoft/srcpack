@@ -78,6 +78,7 @@
     "gh-pages": "^6.3.0",
     "prettier": "^3.8.0",
     "typescript": "^5.9.3",
-    "vitepress": "^2.0.0-alpha.15"
+    "vitepress": "^2.0.0-alpha.15",
+    "vitepress-plugin-llms": "^1.10.0"
   }
 }
