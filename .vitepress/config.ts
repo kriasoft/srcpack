@@ -45,10 +45,32 @@ export default defineConfig({
         content: "https://kriasoft.com/srcpack/srcpack.png",
       },
     ],
+    [
+      "link",
+      {
+        rel: "alternate",
+        type: "text/plain",
+        href: "/srcpack/llms.txt",
+        title: "LLM context",
+      },
+    ],
+    [
+      "link",
+      {
+        rel: "alternate",
+        type: "text/plain",
+        href: "/srcpack/llms-full.txt",
+        title: "LLM context (full)",
+      },
+    ],
   ],
 
   sitemap: {
     hostname: "https://kriasoft.com/srcpack/",
+    transformItems: (items) => {
+      items.push({ url: "llms.txt" }, { url: "llms-full.txt" });
+      return items;
+    },
   },
 
   themeConfig: {
@@ -94,7 +116,8 @@ export default defineConfig({
     ],
 
     footer: {
-      message: "Released under the MIT License.",
+      message:
+        'LLM context: <a href="/srcpack/llms.txt">llms.txt</a> · <a href="/srcpack/llms-full.txt">llms-full.txt</a><br>Released under the MIT License.',
     },
   },
 
