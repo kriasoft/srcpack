@@ -6,10 +6,13 @@ hero:
   name: "Srcpack"
   text: "Make your codebase explain itself"
   tagline: "Bundle your code for LLMs. Get precise answers via ChatGPT, Grok, Gemini."
+  image:
+    src: /srcpack.png
+    alt: Srcpack App Interface
   actions:
     - theme: brand
       text: Get Started
-      link: /guide/getting-started
+      link: /getting-started
     - theme: alt
       text: View on GitHub
       link: https://github.com/kriasoft/srcpack

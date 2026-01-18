@@ -65,32 +65,28 @@ describe("real login flow", () => {
     await rm(TEST_OUTPUT_DIR, { recursive: true, force: true });
   });
 
-  test(
-    "should complete OAuth flow via login command",
-    async () => {
-      console.log("\n--- MANUAL TEST: OAuth Flow ---");
-      console.log("A browser will open for Google authentication.");
-      console.log("Complete the login to continue the test.\n");
+  test("should complete OAuth flow via login command", async () => {
+    console.log("\n--- MANUAL TEST: OAuth Flow ---");
+    console.log("A browser will open for Google authentication.");
+    console.log("Complete the login to continue the test.\n");
 
-      const result = await runCli(["login"], {
-        env: {
-          GDRIVE_CLIENT_ID: process.env.GDRIVE_CLIENT_ID!,
-          GDRIVE_CLIENT_SECRET: process.env.GDRIVE_CLIENT_SECRET!,
-        },
-        timeout: 180_000, // 3 min for manual auth
-      });
+    const result = await runCli(["login"], {
+      env: {
+        GDRIVE_CLIENT_ID: process.env.GDRIVE_CLIENT_ID!,
+        GDRIVE_CLIENT_SECRET: process.env.GDRIVE_CLIENT_SECRET!,
+      },
+      timeout: 180_000, // 3 min for manual auth
+    });
 
-      console.log("stdout:", result.stdout);
-      if (result.stderr) console.log("stderr:", result.stderr);
+    console.log("stdout:", result.stdout);
+    if (result.stderr) console.log("stderr:", result.stderr);
 
-      expect(result.exitCode).toBe(0);
-      expect(result.stdout).toMatch(/login successful/i);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toMatch(/login successful/i);
 
-      // Verify credentials were saved
-      expect(existsSync(CREDENTIALS_PATH)).toBe(true);
-    },
-    180_000,
-  );
+    // Verify credentials were saved
+    expect(existsSync(CREDENTIALS_PATH)).toBe(true);
+  }, 180_000);
 
   test("should reuse cached tokens without opening browser", async () => {
     const clientId = process.env.GDRIVE_CLIENT_ID!;

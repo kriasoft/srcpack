@@ -16,8 +16,34 @@ export default defineConfig({
   head: [
     ["link", { rel: "icon", href: "/srcpack/favicon.ico" }],
     ["meta", { name: "theme-color", content: "#5f67ee" }],
-    ["meta", { name: "og:type", content: "website" }],
-    ["meta", { name: "og:site_name", content: "Srcpack" }],
+    ["meta", { property: "og:type", content: "website" }],
+    ["meta", { property: "og:site_name", content: "Srcpack" }],
+    ["meta", { property: "og:title", content: "Srcpack" }],
+    [
+      "meta",
+      { property: "og:description", content: "Context bundler for LLM work" },
+    ],
+    ["meta", { property: "og:url", content: "https://kriasoft.com/srcpack/" }],
+    [
+      "meta",
+      {
+        property: "og:image",
+        content: "https://kriasoft.com/srcpack/srcpack.png",
+      },
+    ],
+    ["meta", { name: "twitter:card", content: "summary" }],
+    ["meta", { name: "twitter:title", content: "Srcpack" }],
+    [
+      "meta",
+      { name: "twitter:description", content: "Context bundler for LLM work" },
+    ],
+    [
+      "meta",
+      {
+        name: "twitter:image",
+        content: "https://kriasoft.com/srcpack/srcpack.png",
+      },
+    ],
   ],
 
   sitemap: {
@@ -25,17 +51,22 @@ export default defineConfig({
   },
 
   themeConfig: {
-    logo: "/logo.svg",
+    logo: { src: "/logo.png", width: 24, height: 24, alt: "Srcpack" },
 
     nav: [
       { text: "Home", link: "/" },
-      { text: "Guide", link: "/guide/getting-started" },
+      { text: "Guide", link: "/getting-started" },
     ],
 
     sidebar: [
       {
         text: "Guide",
-        items: [{ text: "Getting Started", link: "/guide/getting-started" }],
+        items: [
+          { text: "Getting Started", link: "/getting-started" },
+          { text: "Configuration", link: "/configuration" },
+          { text: "CLI Reference", link: "/cli" },
+          { text: "Google Drive Upload", link: "/upload" },
+        ],
       },
     ],
 

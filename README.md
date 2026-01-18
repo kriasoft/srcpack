@@ -2,6 +2,8 @@
 
 Zero-config CLI for bundling code into LLM-optimized context files.
 
+**Requirements:** Node.js 20+ or Bun
+
 ## Quick Start
 
 ```bash
