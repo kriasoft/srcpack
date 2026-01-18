@@ -8,14 +8,17 @@
         "@clack/prompts": "^0.11.0",
         "@googleapis/drive": "^20.0.0",
         "cosmiconfig": "^9.0.0",
+        "fast-glob": "^3.3.3",
         "google-auth-library": "^10.5.0",
         "ignore": "^7.0.5",
         "oauth-callback": "^1.2.5",
         "ora": "^9.0.0",
+        "picomatch": "^4.0.2",
         "zod": "^4.3.5",
       },
       "devDependencies": {
         "@types/bun": "^1.3.6",
+        "@types/picomatch": "^4.0.2",
         "gh-pages": "^6.3.0",
         "prettier": "^3.8.0",
         "typescript": "^5.9.3",
@@ -254,6 +257,8 @@
     "@types/ms": ["@types/ms@2.1.0", "", {}, "sha512-GsCCIZDE/p3i96vtEqx+7dBUGXrc7zeSK3wwPHIaRThS+9OhWIXRqzs4d6k1SVU8g91DrNRWxWUGhp5KXQb2VA=="],
 
     "@types/node": ["@types/node@25.0.9", "", { "dependencies": { "undici-types": "~7.16.0" } }, "sha512-/rpCXHlCWeqClNBwUhDcusJxXYDjZTyE8v5oTO7WbL8eij2nKhUeU89/6xgjU7N4/Vh3He0BtyhJdQbDyhiXAw=="],
+
+    "@types/picomatch": ["@types/picomatch@4.0.2", "", {}, "sha512-qHHxQ+P9PysNEGbALT8f8YOSHW0KJu6l2xU8DYY0fu/EmGxXdVnuTLvFUvBgPJMSqXq29SYHveejeAha+4AYgA=="],
 
     "@types/unist": ["@types/unist@3.0.3", "", {}, "sha512-ko/gIFJRv177XgZsZcBwnqJN5x/Gien8qNOn0D5bQU/zAzVf9Zt3BlcUiLqhV9y4ARk0GbT3tnUiPNgnTXzc/Q=="],
 

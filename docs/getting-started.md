@@ -198,3 +198,4 @@ yarn dlx srcpack --no-upload  # Skip upload even if configured
 - [Configuration Reference](./configuration.md) — All options explained
 - [Google Drive Upload](./upload.md) — Auto-sync bundles to the cloud
 - [CLI Reference](./cli.md) — Full command documentation
+- [Discord](https://discord.com/invite/aG83xEb6RX) — Questions and discussion

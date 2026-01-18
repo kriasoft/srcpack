@@ -1,7 +1,7 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 // SPDX-License-Identifier: MIT
 
-import { mkdir } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import ora from "ora";
 import { bundleOne, type BundleResult } from "./bundle.ts";
@@ -154,7 +154,7 @@ Options:
       }
     } else {
       await mkdir(dirname(outPath), { recursive: true });
-      await Bun.write(outPath, result.content);
+      await writeFile(outPath, result.content);
       console.log(
         `  ${nameCol}  ${filesCol} ${plural(fileCount, "file")}  ${linesCol} ${plural(lineCount, "line")}  → ${outfile}`,
       );

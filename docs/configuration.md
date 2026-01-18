@@ -74,15 +74,29 @@ bundles: {
 
 ## Pattern Syntax
 
-Patterns follow standard glob syntax:
+Patterns follow standard glob syntax with special prefixes:
 
-| Pattern          | Matches                   |
-| ---------------- | ------------------------- |
-| `src/**/*`       | All files under `src/`    |
-| `*.ts`           | TypeScript files in root  |
-| `**/*.ts`        | TypeScript files anywhere |
-| `!**/*.test.ts`  | Exclude test files        |
-| `{src,lib}/**/*` | Files in `src/` or `lib/` |
+| Pattern          | Matches                            |
+| ---------------- | ---------------------------------- |
+| `src/**/*`       | All files under `src/`             |
+| `*.ts`           | TypeScript files in root           |
+| `**/*.ts`        | TypeScript files anywhere          |
+| `!**/*.test.ts`  | Exclude test files                 |
+| `+**/*.local.md` | Force-include, bypass `.gitignore` |
+| `{src,lib}/**/*` | Files in `src/` or `lib/`          |
+
+### Force-Include (`+` prefix)
+
+Use `+` to include files that would normally be excluded by `.gitignore`:
+
+```ts
+bundles: {
+  docs: [
+    "docs/**/*",           // all docs (respects .gitignore)
+    "+docs/**/*.local.md", // force-include local notes
+  ],
+}
+```
 
 ## Automatic Exclusions
 

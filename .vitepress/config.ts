@@ -113,6 +113,9 @@ export default defineConfig({
 
     socialLinks: [
       { icon: "github", link: "https://github.com/kriasoft/srcpack" },
+      { icon: "discord", link: "https://discord.com/invite/aG83xEb6RX" },
+      { icon: "x", link: "https://x.com/kriasoft" },
+      { icon: "bluesky", link: "https://bsky.app/profile/kriasoft.com" },
     ],
 
     footer: {

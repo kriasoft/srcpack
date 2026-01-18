@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MIT
 
+import { open, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { Glob } from "bun";
+import { glob } from "fast-glob";
+import picomatch from "picomatch";
 import ignore, { type Ignore } from "ignore";
 import type { BundleConfigInput } from "./config.ts";
 
@@ -9,12 +11,17 @@ import type { BundleConfigInput } from "./config.ts";
 const BINARY_CHECK_SIZE = 8192;
 
 async function isBinary(filePath: string): Promise<boolean> {
-  const file = Bun.file(filePath);
-  const size = file.size;
-  if (size === 0) return false;
+  const stats = await stat(filePath);
+  if (stats.size === 0) return false;
 
-  const chunk = await file.slice(0, Math.min(size, BINARY_CHECK_SIZE)).bytes();
-  return chunk.includes(0);
+  const fd = await open(filePath, "r");
+  try {
+    const buffer = Buffer.alloc(Math.min(stats.size, BINARY_CHECK_SIZE));
+    await fd.read(buffer, 0, buffer.length, 0);
+    return buffer.includes(0);
+  } finally {
+    await fd.close();
+  }
 }
 
 export interface FileEntry {
@@ -30,11 +37,15 @@ export interface BundleResult {
 }
 
 /**
- * Normalize BundleConfig to arrays of include/exclude patterns
+ * Normalize BundleConfig to arrays of include/exclude/force patterns.
+ * - Regular patterns: included, filtered by .gitignore
+ * - `!pattern`: excluded from results
+ * - `+pattern`: force-included, bypasses .gitignore
  */
 function normalizePatterns(config: BundleConfigInput): {
   include: string[];
   exclude: string[];
+  force: string[];
 } {
   let patterns: string[];
 
@@ -50,29 +61,28 @@ function normalizePatterns(config: BundleConfigInput): {
 
   const include: string[] = [];
   const exclude: string[] = [];
+  const force: string[] = [];
 
   for (const p of patterns) {
     if (p.startsWith("!")) {
       exclude.push(p.slice(1));
+    } else if (p.startsWith("+")) {
+      force.push(p.slice(1));
     } else {
       include.push(p);
     }
   }
 
-  return { include, exclude };
+  return { include, exclude, force };
 }
 
+type Matcher = (path: string) => boolean;
+
 /**
- * Check if a path matches any of the exclusion patterns
+ * Check if a path matches any of the exclusion matchers
  */
-function isExcluded(filePath: string, excludePatterns: string[]): boolean {
-  for (const pattern of excludePatterns) {
-    const glob = new Glob(pattern);
-    if (glob.match(filePath)) {
-      return true;
-    }
-  }
-  return false;
+function isExcluded(filePath: string, matchers: Matcher[]): boolean {
+  return matchers.some((match) => match(filePath));
 }
 
 /**
@@ -83,7 +93,7 @@ async function loadGitignore(cwd: string): Promise<Ignore> {
   const gitignorePath = join(cwd, ".gitignore");
 
   try {
-    const content = await Bun.file(gitignorePath).text();
+    const content = await readFile(gitignorePath, "utf-8");
     ig.add(content);
   } catch {
     // No .gitignore file, return empty ignore instance
@@ -94,20 +104,37 @@ async function loadGitignore(cwd: string): Promise<Ignore> {
 
 /**
  * Resolve bundle config to a list of file paths.
- * Respects .gitignore patterns in the working directory.
+ * - Regular patterns respect .gitignore
+ * - Force patterns (+prefix) bypass .gitignore
+ * - Exclude patterns (!prefix) filter both
  */
 export async function resolvePatterns(
   config: BundleConfigInput,
   cwd: string,
 ): Promise<string[]> {
-  const { include, exclude } = normalizePatterns(config);
+  const { include, exclude, force } = normalizePatterns(config);
+  const excludeMatchers = exclude.map((p) => picomatch(p));
   const gitignore = await loadGitignore(cwd);
   const files = new Set<string>();
 
-  for (const pattern of include) {
-    const glob = new Glob(pattern);
-    for await (const match of glob.scan({ cwd, onlyFiles: true })) {
-      if (!isExcluded(match, exclude) && !gitignore.ignores(match)) {
+  // Regular includes: respect .gitignore
+  if (include.length > 0) {
+    const matches = await glob(include, { cwd, onlyFiles: true, dot: true });
+    for (const match of matches) {
+      if (!isExcluded(match, excludeMatchers) && !gitignore.ignores(match)) {
+        const fullPath = join(cwd, match);
+        if (!(await isBinary(fullPath))) {
+          files.add(match);
+        }
+      }
+    }
+  }
+
+  // Force includes: bypass .gitignore
+  if (force.length > 0) {
+    const matches = await glob(force, { cwd, onlyFiles: true, dot: true });
+    for (const match of matches) {
+      if (!isExcluded(match, excludeMatchers)) {
         const fullPath = join(cwd, match);
         if (!(await isBinary(fullPath))) {
           files.add(match);
@@ -184,7 +211,7 @@ export async function createBundle(
   for (let i = 0; i < files.length; i++) {
     const filePath = files[i]!;
     const fullPath = join(cwd, filePath);
-    const content = await Bun.file(fullPath).text();
+    const content = await readFile(fullPath, "utf-8");
     const lines = countLines(content);
 
     // Separator takes 1 line, then content starts on next line

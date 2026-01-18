@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 import * as p from "@clack/prompts";
-import { appendFile, readFile } from "node:fs/promises";
+import { appendFile, readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
@@ -70,7 +70,7 @@ export async function runInit(): Promise<void> {
 
   // Generate and write config
   const config = generateConfig(bundles, outDirValue);
-  await Bun.write(configPath, config);
+  await writeFile(configPath, config);
 
   // Add output directory to .gitignore
   await addToGitignore(cwd, outDirValue);

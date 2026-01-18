@@ -14,6 +14,10 @@ const gitignoreFixturesDir = join(
   "../fixtures/gitignore-project",
 );
 const binaryFixturesDir = join(import.meta.dir, "../fixtures/binary-project");
+const forceIncludeDir = join(
+  import.meta.dir,
+  "../fixtures/force-include-project",
+);
 
 describe("resolvePatterns", () => {
   test("should resolve string pattern", async () => {
@@ -112,6 +116,45 @@ describe("resolvePatterns", () => {
     expect(files).toContain("src/index.ts");
     expect(files).not.toContain("src/binary.bin");
     expect(files).not.toContain("src/image.png");
+  });
+
+  test("should force-include gitignored files with + prefix", async () => {
+    const files = await resolvePatterns(
+      ["docs/**/*", "+docs/**/*.local.md"],
+      forceIncludeDir,
+    );
+
+    // Regular file included
+    expect(files).toContain("docs/guide.md");
+    // Gitignored files force-included
+    expect(files).toContain("docs/notes.local.md");
+    expect(files).toContain("docs/private.local.md");
+  });
+
+  test("should exclude gitignored files without + prefix", async () => {
+    const files = await resolvePatterns("docs/**/*", forceIncludeDir);
+
+    expect(files).toContain("docs/guide.md");
+    expect(files).not.toContain("docs/notes.local.md");
+    expect(files).not.toContain("docs/private.local.md");
+  });
+
+  test("should apply ! exclusions to force-included files", async () => {
+    const files = await resolvePatterns(
+      ["+docs/**/*.local.md", "!docs/private.local.md"],
+      forceIncludeDir,
+    );
+
+    expect(files).toContain("docs/notes.local.md");
+    expect(files).not.toContain("docs/private.local.md");
+  });
+
+  test("should work with only force-include patterns", async () => {
+    const files = await resolvePatterns("+docs/**/*.local.md", forceIncludeDir);
+
+    expect(files).toContain("docs/notes.local.md");
+    expect(files).toContain("docs/private.local.md");
+    expect(files).not.toContain("docs/guide.md");
   });
 });
 

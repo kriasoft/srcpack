@@ -60,8 +60,11 @@ Or add to `package.json`:
 // Simple glob
 "src/**/*"
 
-// Array with exclusions
+// Array with exclusions (! prefix)
 ["src/**/*", "!src/**/*.test.ts"]
+
+// Force-include gitignored files (+ prefix)
+["docs/**/*", "+docs/**/*.local.md"]
 
 // Full options
 {
@@ -71,7 +74,7 @@ Or add to `package.json`:
 }
 ```
 
-Patterns follow glob syntax. Prefix with `!` to exclude. `.gitignore` patterns are respected automatically. Binary files are excluded.
+Patterns follow glob syntax. Prefix with `!` to exclude, `+` to force-include (bypasses `.gitignore`). Binary files are excluded.
 
 ### Google Drive Upload
 
@@ -150,6 +153,13 @@ const config = await loadConfig();
 
 - https://kriasoft.com/srcpack/llms.txt
 - https://kriasoft.com/srcpack/llms-full.txt
+
+## Community
+
+- [Discord](https://discord.com/invite/aG83xEb6RX) — Questions, feedback, and discussion
+- [GitHub Issues](https://github.com/kriasoft/srcpack/issues) — Bug reports and feature requests
+
+New contributors and OSS maintainers are welcome — join us on Discord or open an issue / PR.
 
 ## Backers
 
