@@ -1,0 +1,19 @@
+# Srcpack
+
+> Make your codebase explain itself
+
+Bundle your code for LLMs. Get precise answers via ChatGPT, Grok, Gemini.
+
+## Table of Contents
+
+### Guide
+
+- [Why Srcpack](/srcpack/why-srcpack.md)
+- [Getting Started](/srcpack/getting-started.md)
+- [Configuration](/srcpack/configuration.md)
+- [CLI Reference](/srcpack/cli.md)
+- [Google Drive Upload](/srcpack/upload.md)
+
+### Other
+
+- [Product Vision](/srcpack/product-vision.md)

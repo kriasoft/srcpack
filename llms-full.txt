@@ -1,0 +1,1000 @@
+---
+url: /srcpack/cli.md
+---
+# CLI Reference
+
+## Installation
+
+Srcpack runs without global install:
+
+::: code-group
+
+```sh [npm]
+npx srcpack [command] [options]
+```
+
+```sh [bun]
+bunx srcpack [command] [options]
+```
+
+```sh [pnpm]
+pnpm dlx srcpack [command] [options]
+```
+
+```sh [yarn]
+yarn dlx srcpack [command] [options]
+```
+
+:::
+
+Or install as a dev dependency:
+
+::: code-group
+
+```sh [npm]
+npm install -D srcpack
+```
+
+```sh [bun]
+bun add -D srcpack
+```
+
+```sh [pnpm]
+pnpm add -D srcpack
+```
+
+```sh [yarn]
+yarn add -D srcpack
+```
+
+:::
+
+## Commands
+
+### `srcpack` (default)
+
+Bundle all configured bundles and upload if configured.
+
+::: code-group
+
+```sh [npm]
+npx srcpack
+```
+
+```sh [bun]
+bunx srcpack
+```
+
+```sh [pnpm]
+pnpm dlx srcpack
+```
+
+```sh [yarn]
+yarn dlx srcpack
+```
+
+:::
+
+**With specific bundles:**
+
+::: code-group
+
+```sh [npm]
+npx srcpack web api
+```
+
+```sh [bun]
+bunx srcpack web api
+```
+
+```sh [pnpm]
+pnpm dlx srcpack web api
+```
+
+```sh [yarn]
+yarn dlx srcpack web api
+```
+
+:::
+
+### `srcpack init`
+
+Create a `srcpack.config.ts` interactively.
+
+::: code-group
+
+```sh [npm]
+npx srcpack init
+```
+
+```sh [bun]
+bunx srcpack init
+```
+
+```sh [pnpm]
+pnpm dlx srcpack init
+```
+
+```sh [yarn]
+yarn dlx srcpack init
+```
+
+:::
+
+Detects your project structure and suggests bundle configurations.
+
+### `srcpack login`
+
+Authenticate with Google Drive for uploads.
+
+::: code-group
+
+```sh [npm]
+npx srcpack login
+```
+
+```sh [bun]
+bunx srcpack login
+```
+
+```sh [pnpm]
+pnpm dlx srcpack login
+```
+
+```sh [yarn]
+yarn dlx srcpack login
+```
+
+:::
+
+Opens a browser to authorize access. Tokens are stored in `~/.config/srcpack/credentials.json`.
+
+## Options
+
+| Option        | Description                           |
+| ------------- | ------------------------------------- |
+| `--dry-run`   | Preview bundles without writing files |
+| `--no-upload` | Bundle only, skip upload              |
+| `--help`      | Show help                             |
+| `--version`   | Show version                          |
+
+## Examples
+
+### Preview without writing
+
+::: code-group
+
+```sh [npm]
+npx srcpack --dry-run
+```
+
+```sh [bun]
+bunx srcpack --dry-run
+```
+
+```sh [pnpm]
+pnpm dlx srcpack --dry-run
+```
+
+```sh [yarn]
+yarn dlx srcpack --dry-run
+```
+
+:::
+
+Output:
+
+```
+[dry-run] web  →  .srcpack/web.txt  (24 files, 8.2 KB)
+[dry-run] api  →  .srcpack/api.txt  (18 files, 5.1 KB)
+```
+
+### Bundle without upload
+
+::: code-group
+
+```sh [npm]
+npx srcpack --no-upload
+```
+
+```sh [bun]
+bunx srcpack --no-upload
+```
+
+```sh [pnpm]
+pnpm dlx srcpack --no-upload
+```
+
+```sh [yarn]
+yarn dlx srcpack --no-upload
+```
+
+:::
+
+## Exit Codes
+
+| Code | Meaning                 |
+| ---- | ----------------------- |
+| `0`  | Success                 |
+| `1`  | Error (config, IO, etc) |
+
+## Config File Locations
+
+Srcpack searches for config in order:
+
+1. `srcpack.config.ts`
+2. `srcpack.config.js`
+3. `srcpack` field in `package.json`
+
+Searches from current directory up to filesystem root.
+
+---
+
+---
+url: /srcpack/configuration.md
+---
+# Configuration
+
+Srcpack looks for configuration in the following order:
+
+1. `srcpack.config.ts` (recommended)
+2. `srcpack.config.js`
+3. `srcpack` field in `package.json`
+
+## Basic Structure
+
+```ts
+import { defineConfig } from "srcpack";
+
+export default defineConfig({
+  outDir: ".srcpack",
+  bundles: {
+    // bundle definitions
+  },
+  upload: {
+    // optional upload config
+  },
+});
+```
+
+## Options
+
+| Option    | Type     | Default    | Description                  |
+| --------- | -------- | ---------- | ---------------------------- |
+| `outDir`  | `string` | `.srcpack` | Output directory for bundles |
+| `bundles` | `object` | —          | Named bundles (required)     |
+| `upload`  | `object` | —          | Upload destination           |
+
+## Bundle Definitions
+
+Each bundle can be defined in three ways:
+
+### String (Simple Glob)
+
+```ts
+bundles: {
+  app: "src/**/*",
+}
+```
+
+### Array (Multiple Patterns)
+
+Use `!` prefix to exclude:
+
+```ts
+bundles: {
+  api: ["src/**/*", "!src/**/*.test.ts"],
+}
+```
+
+### Object (Full Options)
+
+```ts
+bundles: {
+  docs: {
+    include: "docs/**/*.md",
+    outfile: "~/Downloads/docs.txt",
+    index: false,
+  },
+}
+```
+
+**Bundle options:**
+
+| Option    | Type                 | Default               | Description          |
+| --------- | -------------------- | --------------------- | -------------------- |
+| `include` | `string \| string[]` | —                     | Glob pattern(s)      |
+| `outfile` | `string`             | `{outDir}/{name}.txt` | Custom output path   |
+| `index`   | `boolean`            | `true`                | Include index header |
+
+## Pattern Syntax
+
+Patterns follow standard glob syntax:
+
+| Pattern          | Matches                   |
+| ---------------- | ------------------------- |
+| `src/**/*`       | All files under `src/`    |
+| `*.ts`           | TypeScript files in root  |
+| `**/*.ts`        | TypeScript files anywhere |
+| `!**/*.test.ts`  | Exclude test files        |
+| `{src,lib}/**/*` | Files in `src/` or `lib/` |
+
+## Automatic Exclusions
+
+Srcpack automatically excludes:
+
+* Files matching `.gitignore` patterns
+* Binary files (images, fonts, compiled assets)
+* `node_modules/`
+* `.git/`
+* Lock files (`package-lock.json`, `yarn.lock`, etc.)
+
+## Examples
+
+### Monorepo
+
+```ts
+export default defineConfig({
+  bundles: {
+    web: "apps/web/**/*",
+    api: "apps/api/**/*",
+    shared: "packages/shared/**/*",
+  },
+});
+```
+
+### Frontend + Backend
+
+```ts
+export default defineConfig({
+  bundles: {
+    client: ["src/client/**/*", "src/shared/**/*"],
+    server: ["src/server/**/*", "src/shared/**/*"],
+  },
+});
+```
+
+### Exclude Tests and Mocks
+
+```ts
+export default defineConfig({
+  bundles: {
+    app: [
+      "src/**/*",
+      "!src/**/*.test.ts",
+      "!src/**/*.spec.ts",
+      "!src/**/__mocks__/**",
+    ],
+  },
+});
+```
+
+### Package.json Config
+
+```json
+{
+  "srcpack": {
+    "bundles": {
+      "app": "src/**/*"
+    }
+  }
+}
+```
+
+## TypeScript Support
+
+The `defineConfig` helper provides type checking and autocomplete:
+
+```ts
+import { defineConfig } from "srcpack";
+
+export default defineConfig({
+  // Full autocomplete here
+});
+```
+
+---
+
+---
+url: /srcpack/getting-started.md
+---
+# Getting Started
+
+Bundle your codebase into LLM-optimized context files. Get precise, grounded answers from ChatGPT, Claude, Gemini, and other AI tools.
+
+## Prerequisites
+
+* Node.js 20+ or Bun
+* A codebase you want to share with AI
+
+## Quick Start
+
+::: code-group
+
+```sh [npm]
+npx srcpack init
+```
+
+```sh [bun]
+bunx srcpack init
+```
+
+```sh [pnpm]
+pnpm dlx srcpack init
+```
+
+```sh [yarn]
+yarn dlx srcpack init
+```
+
+:::
+
+This creates a `srcpack.config.ts` file with bundles based on your project structure.
+
+Then run:
+
+::: code-group
+
+```sh [npm]
+npx srcpack
+```
+
+```sh [bun]
+bunx srcpack
+```
+
+```sh [pnpm]
+pnpm dlx srcpack
+```
+
+```sh [yarn]
+yarn dlx srcpack
+```
+
+:::
+
+Your bundles are now in `.srcpack/` — ready to upload to any AI chat.
+
+## Your First Bundle
+
+Create `srcpack.config.ts` in your project root:
+
+```ts
+import { defineConfig } from "srcpack";
+
+export default defineConfig({
+  bundles: {
+    app: "src/**/*",
+  },
+});
+```
+
+Run the bundle command and you'll see:
+
+```
+✓ app  →  .srcpack/app.txt  (12 files, 2.4 KB)
+```
+
+## Understanding the Output
+
+Srcpack generates an indexed bundle optimized for AI consumption:
+
+```text
+# Index (3 files)
+# [1]   src/index.ts  L1-L42
+# [2]   src/utils.ts  L43-L89
+# [3]   src/api.ts    L90-L150
+
+#==> [1] src/index.ts <==
+import { utils } from "./utils";
+...
+
+#==> [2] src/utils.ts <==
+export function utils() {
+...
+```
+
+**Why this format matters:**
+
+* **Numbered index** — AI can reference `[2] src/utils.ts` in responses
+* **Line numbers** — Answers include exact locations like `L43-L89`
+* **`#` prefix** — Safe to paste inside markdown code blocks
+
+When you ask "How does the auth flow work?", AI responds with:
+
+> The auth flow starts in `[3] src/api.ts:L92` where...
+
+## Using with AI
+
+1. Open [ChatGPT](https://chat.openai.com), [Claude](https://claude.ai), or your preferred AI
+2. Upload `.srcpack/app.txt` or paste its contents
+3. Ask questions about your code
+
+**Example prompts:**
+
+* "Explain how the main entry point works"
+* "Find where errors are handled"
+* "What would break if I renamed the `User` type?"
+
+The AI answers are grounded in your actual code, with file and line references.
+
+## Configuration Patterns
+
+### Multiple Bundles
+
+Split your codebase into semantic domains:
+
+```ts
+export default defineConfig({
+  bundles: {
+    web: "apps/web/**/*",
+    api: "apps/api/**/*",
+    shared: "packages/shared/**/*",
+  },
+});
+```
+
+### Exclusions
+
+Use `!` prefix to exclude patterns:
+
+```ts
+export default defineConfig({
+  bundles: {
+    api: ["src/**/*", "!src/**/*.test.ts", "!src/**/*.spec.ts"],
+  },
+});
+```
+
+### Custom Output Path
+
+```ts
+export default defineConfig({
+  bundles: {
+    docs: {
+      include: "docs/**/*.md",
+      outfile: "~/Downloads/docs-bundle.txt",
+    },
+  },
+});
+```
+
+## CLI Reference
+
+::: code-group
+
+```sh [npm]
+npx srcpack              # Bundle all
+npx srcpack web api      # Bundle specific bundles only
+npx srcpack --dry-run    # Preview without writing
+npx srcpack --no-upload  # Skip upload even if configured
+```
+
+```sh [bun]
+bunx srcpack              # Bundle all
+bunx srcpack web api      # Bundle specific bundles only
+bunx srcpack --dry-run    # Preview without writing
+bunx srcpack --no-upload  # Skip upload even if configured
+```
+
+```sh [pnpm]
+pnpm dlx srcpack              # Bundle all
+pnpm dlx srcpack web api      # Bundle specific bundles only
+pnpm dlx srcpack --dry-run    # Preview without writing
+pnpm dlx srcpack --no-upload  # Skip upload even if configured
+```
+
+```sh [yarn]
+yarn dlx srcpack              # Bundle all
+yarn dlx srcpack web api      # Bundle specific bundles only
+yarn dlx srcpack --dry-run    # Preview without writing
+yarn dlx srcpack --no-upload  # Skip upload even if configured
+```
+
+:::
+
+## Next Steps
+
+* [Configuration Reference](./configuration.md) — All options explained
+* [Google Drive Upload](./upload.md) — Auto-sync bundles to the cloud
+* [CLI Reference](./cli.md) — Full command documentation
+
+---
+
+---
+url: /srcpack/upload.md
+---
+# Google Drive Upload
+
+Srcpack can automatically upload bundles to Google Drive, making them accessible from any device or shareable with your team.
+
+## Setup
+
+### 1. Create OAuth Credentials
+
+1. Go to [Google Cloud Console](https://console.cloud.google.com/)
+2. Create a project (or select existing)
+3. Enable the **Google Drive API**
+4. Go to **Credentials** → **Create Credentials** → **OAuth client ID**
+5. Select **Desktop app**
+6. Copy the **Client ID** and **Client Secret**
+
+### 2. Configure Srcpack
+
+Add the upload config to `srcpack.config.ts`:
+
+```ts
+import { defineConfig } from "srcpack";
+
+export default defineConfig({
+  bundles: {
+    web: "apps/web/**/*",
+    api: "apps/api/**/*",
+  },
+  upload: {
+    provider: "gdrive",
+    folderId: "1ABC...", // From Drive folder URL
+    clientId: "...",
+    clientSecret: "...",
+  },
+});
+```
+
+**Finding your folder ID:**
+
+Open the target folder in Google Drive. The URL looks like:
+
+```
+https://drive.google.com/drive/folders/1ABCxyz123...
+                                        └─────────┘
+                                         folder ID
+```
+
+### 3. Authenticate
+
+Run the login command:
+
+::: code-group
+
+```sh [npm]
+npx srcpack login
+```
+
+```sh [bun]
+bunx srcpack login
+```
+
+```sh [pnpm]
+pnpm dlx srcpack login
+```
+
+```sh [yarn]
+yarn dlx srcpack login
+```
+
+:::
+
+This opens a browser window to authorize access. Tokens are stored locally and refreshed automatically.
+
+## Usage
+
+Once configured, `npx srcpack` uploads bundles after bundling:
+
+```
+✓ web  →  .srcpack/web.txt  (24 files, 8.2 KB)
+✓ api  →  .srcpack/api.txt  (18 files, 5.1 KB)
+↑ Uploaded to Google Drive
+```
+
+### Skip Upload
+
+To bundle without uploading:
+
+::: code-group
+
+```sh [npm]
+npx srcpack --no-upload
+```
+
+```sh [bun]
+bunx srcpack --no-upload
+```
+
+```sh [pnpm]
+pnpm dlx srcpack --no-upload
+```
+
+```sh [yarn]
+yarn dlx srcpack --no-upload
+```
+
+:::
+
+### Upload Specific Bundles
+
+::: code-group
+
+```sh [npm]
+npx srcpack web
+```
+
+```sh [bun]
+bunx srcpack web
+```
+
+```sh [pnpm]
+pnpm dlx srcpack web
+```
+
+```sh [yarn]
+yarn dlx srcpack web
+```
+
+:::
+
+## Environment Variables
+
+::: warning
+Never commit `clientId` and `clientSecret` directly in your config file. Use environment variables for shared or public repositories.
+:::
+
+For CI/CD or shared configs, use environment variables:
+
+```ts
+export default defineConfig({
+  bundles: {
+    /* ... */
+  },
+  upload: {
+    provider: "gdrive",
+    folderId: process.env.GDRIVE_FOLDER_ID,
+    clientId: process.env.GDRIVE_CLIENT_ID,
+    clientSecret: process.env.GDRIVE_CLIENT_SECRET,
+  },
+});
+```
+
+## Sharing with Your Team
+
+Once uploaded, bundles appear in your Google Drive folder. You can:
+
+1. **Share the folder** with team members
+2. **Open in ChatGPT/Claude** — use the Google Drive integration
+3. **Download** — grab the latest bundle from any device
+
+## Troubleshooting
+
+::: details "Access denied" error
+Re-run the login command to refresh authentication.
+:::
+
+::: details "Folder not found" error
+Verify the folder ID is correct and you have write access to the folder.
+:::
+
+::: details Tokens expired
+Srcpack automatically refreshes tokens. If issues persist, delete `~/.config/srcpack/credentials.json` and run the login command again.
+:::
+
+---
+
+---
+url: /srcpack/product-vision.md
+---
+# Product Vision
+
+## One-liner
+
+CLI that bundles repo code into domain-focused context for LLMs.
+
+## Problem
+
+LLM context fails when it's too large, noisy, or flat. Existing tools split by size, not semantics. Teams need repeatable, indexed bundles per domain (db, API, web).
+
+## Users
+
+* Developers using LLMs for refactors, reviews, and design on real codebases
+* Teams with multiple domains in one repo
+
+## Principles
+
+* Semantic splitting over size-based
+* Index-first output, readable by humans and models
+* Safe defaults (respects .gitignore, skips secrets)
+* Zero-friction CLI
+
+## MVP Scope
+
+* Named bundles from one repo via simple config
+* Per-bundle include/exclude globs
+* Index at top (file list + tree), clear file boundaries
+* Output: plain text, Markdown, or XML
+* Upload to Google Drive folder
+
+## Non-Goals
+
+* MCP server or live streaming
+* Auto-classification without config
+* IDE plugins
+
+## Success
+
+* Bundles reused across tasks without edits
+* Fewer "lost in the middle" hallucinations
+* Teams converge on standard context presets
+
+---
+
+---
+url: /srcpack/why-srcpack.md
+---
+# Why Srcpack
+
+AI assistants are transforming how we work with code, but they hit a wall when your codebase doesn't fit in a single prompt. Srcpack solves this by turning your code into organized, indexed bundles that any AI can understand.
+
+## The Problem
+
+When you paste code into ChatGPT, Claude, or Gemini, several things go wrong:
+
+* **Context limits** — Large codebases exceed token limits, forcing you to cherry-pick files
+* **Lost structure** — Flat file dumps lose the semantic relationships between modules
+* **No references** — AI answers mention "that function" but can't point to exact locations
+* **Manual work** — Every conversation requires re-copying the same files
+
+Teams waste time reformatting code for AI instead of getting answers.
+
+## Who Benefits
+
+### Team Leads and CTOs
+
+Share your codebase with stakeholders who need precise answers:
+
+* "What's the status of the payment integration?"
+* "How complete is the new auth system?"
+* "What would it take to add multi-tenancy?"
+
+Upload your bundles once. Anyone with access can query the code without setting up a dev environment or reading source files directly.
+
+### Developers
+
+Stop manually copying files into chat windows:
+
+* **Code reviews** — Upload a bundle, ask "Find potential bugs in the checkout flow"
+* **Refactoring** — "What would break if I renamed `UserService` to `AccountService`?"
+* **Debugging** — "Where does this error originate and how does it propagate?"
+* **Architecture** — "How do these modules interact? Draw the dependency graph"
+
+### New Team Members
+
+Onboard faster by querying the codebase directly:
+
+* "How does authentication work in this project?"
+* "Where are database migrations defined?"
+* "What's the pattern for adding new API endpoints?"
+
+::: tip
+The indexed output means AI answers include exact file and line references, not vague descriptions.
+:::
+
+### Technical Writers
+
+Generate documentation grounded in actual code:
+
+* "Document the public API of this module"
+* "Write a getting-started guide based on the example code"
+* "Create a changelog from recent changes"
+
+## Use Cases
+
+### Project Status and Planning
+
+Bundle your codebase and share it with project managers or executives:
+
+```
+Upload: .srcpack/app.txt
+
+"Analyze this codebase. What features are implemented vs stubbed out?
+What areas have the most technical debt? Estimate complexity to add OAuth."
+```
+
+::: info
+AI gives answers based on real code, not guesses.
+:::
+
+### Cross-Team Knowledge Sharing
+
+When another team needs to understand your service:
+
+```
+Upload: .srcpack/api.txt
+
+"We need to integrate with your user service. What endpoints are available?
+What authentication does it expect? Show example request/response."
+```
+
+::: tip
+No meetings required. The code explains itself.
+:::
+
+### Security Reviews
+
+Have AI audit your code for vulnerabilities:
+
+```
+Upload: .srcpack/auth.txt
+
+"Review this authentication code. Check for:
+- SQL injection
+- Missing input validation
+- Insecure token handling
+- OWASP Top 10 issues"
+```
+
+### Legacy Code Understanding
+
+Before touching unfamiliar code:
+
+```
+Upload: .srcpack/legacy.txt
+
+"This is legacy code I need to modify. Explain:
+- What does this system do?
+- What are the main entry points?
+- What would break if I change the User class?"
+```
+
+### Estimation and Scoping
+
+Get AI help with technical estimates:
+
+```
+Upload: .srcpack/app.txt
+
+"We need to add real-time notifications. Based on this codebase:
+- What existing patterns should I follow?
+- What modules need changes?
+- What's the rough scope of work?"
+```
+
+## Why Not Just Copy Files?
+
+You could paste files manually, but srcpack provides:
+
+| Manual Copy                 | Srcpack                                   |
+| --------------------------- | ----------------------------------------- |
+| Cherry-pick files each time | Define bundles once, reuse forever        |
+| Flat text dump              | Indexed with file numbers and line ranges |
+| AI says "in that file"      | AI says "\[3] src/auth.ts:L42"             |
+| Includes junk files         | Respects .gitignore, skips binaries       |
+| Different format each time  | Consistent output format                  |
+| Local only                  | Optional cloud upload for team sharing    |
+
+## Getting Started
+
+::: code-group
+
+```sh [npm]
+npx srcpack init    # Create config from your project
+npx srcpack         # Generate bundles
+```
+
+```sh [bun]
+bunx srcpack init
+bunx srcpack
+```
+
+```sh [pnpm]
+pnpm dlx srcpack init
+pnpm dlx srcpack
+```
+
+```sh [yarn]
+yarn dlx srcpack init
+yarn dlx srcpack
+```
+
+:::
+
+Your bundles are ready in `.srcpack/` — upload them to any AI and start asking questions.
+
+See the [Getting Started](./getting-started.md) guide for full setup instructions.
