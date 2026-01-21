@@ -27,11 +27,14 @@ export default defineConfig({
 
 ## Options
 
-| Option    | Type     | Default    | Description                  |
-| --------- | -------- | ---------- | ---------------------------- |
-| `outDir`  | `string` | `.srcpack` | Output directory for bundles |
-| `bundles` | `object` | —          | Named bundles (required)     |
-| `upload`  | `object` | —          | Upload destination           |
+| Option        | Type      | Default    | Description                            |
+| ------------- | --------- | ---------- | -------------------------------------- |
+| `outDir`      | `string`  | `.srcpack` | Output directory for bundles           |
+| `emptyOutDir` | `boolean` | `true`\*   | Empty output directory before bundling |
+| `bundles`     | `object`  | —          | Named bundles (required)               |
+| `upload`      | `object`  | —          | Upload destination                     |
+
+\*`emptyOutDir` defaults to `true` when `outDir` is inside project root.
 
 ## Bundle Definitions
 
@@ -162,6 +165,35 @@ export default defineConfig({
   }
 }
 ```
+
+## Upload Configuration
+
+Configure cloud upload destinations. See [Google Drive Upload](/upload) for setup details.
+
+```ts
+export default defineConfig({
+  bundles: {
+    /* ... */
+  },
+  upload: {
+    provider: "gdrive",
+    folderId: "1ABC...",
+    clientId: process.env.GDRIVE_CLIENT_ID,
+    clientSecret: process.env.GDRIVE_CLIENT_SECRET,
+    exclude: ["local"], // skip these bundles
+  },
+});
+```
+
+**Upload options:**
+
+| Option         | Type       | Default | Description                        |
+| -------------- | ---------- | ------- | ---------------------------------- |
+| `provider`     | `"gdrive"` | —       | Upload provider (required)         |
+| `folderId`     | `string`   | —       | Target folder ID (optional)        |
+| `clientId`     | `string`   | —       | OAuth client ID (required)         |
+| `clientSecret` | `string`   | —       | OAuth client secret (required)     |
+| `exclude`      | `string[]` | —       | Bundle names to skip during upload |
 
 ## TypeScript Support
 
