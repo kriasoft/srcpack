@@ -72,11 +72,12 @@ bundles: {
 
 **Bundle options:**
 
-| Option    | Type                 | Default               | Description          |
-| --------- | -------------------- | --------------------- | -------------------- |
-| `include` | `string \| string[]` | —                     | Glob pattern(s)      |
-| `outfile` | `string`             | `{outDir}/{name}.txt` | Custom output path   |
-| `index`   | `boolean`            | `true`                | Include index header |
+| Option    | Type                 | Default               | Description                              |
+| --------- | -------------------- | --------------------- | ---------------------------------------- |
+| `include` | `string \| string[]` | —                     | Glob pattern(s)                          |
+| `outfile` | `string`             | `{outDir}/{name}.txt` | Custom output path                       |
+| `index`   | `boolean`            | `true`                | Include index header                     |
+| `prompt`  | `string`             | —                     | Text or file path (`./`, `~/`) to prepend |
 
 ## Pattern Syntax
 
@@ -150,6 +151,19 @@ export default defineConfig({
       "!src/**/*.spec.ts",
       "!src/**/__mocks__/**",
     ],
+  },
+});
+```
+
+### Code Review Bundle
+
+```ts
+export default defineConfig({
+  bundles: {
+    review: {
+      include: "src/**/*",
+      prompt: "./prompts/review.md",  // or inline: "Review this code..."
+    },
   },
 });
 ```
