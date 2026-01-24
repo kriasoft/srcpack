@@ -34,6 +34,10 @@
     "type": "git",
     "url": "https://github.com/kriasoft/srcpack.git"
   },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "bugs": {
     "url": "https://github.com/kriasoft/srcpack/issues"
   },
