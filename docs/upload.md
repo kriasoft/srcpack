@@ -24,15 +24,27 @@ export default defineConfig({
   bundles: {
     web: "apps/web/**/*",
     api: "apps/api/**/*",
+    local: "local/**/*", // local-only bundle
   },
   upload: {
     provider: "gdrive",
     folderId: "1ABC...", // From Drive folder URL
     clientId: "...",
     clientSecret: "...",
+    exclude: ["local"], // skip these bundles
   },
 });
 ```
+
+**Upload options:**
+
+| Option         | Type       | Description                                      |
+| -------------- | ---------- | ------------------------------------------------ |
+| `provider`     | `"gdrive"` | Upload provider (currently only gdrive)          |
+| `folderId`     | `string`   | Google Drive folder ID (optional, defaults root) |
+| `clientId`     | `string`   | OAuth 2.0 client ID                              |
+| `clientSecret` | `string`   | OAuth 2.0 client secret                          |
+| `exclude`      | `string[]` | Bundle names to skip during upload               |
 
 **Finding your folder ID:**
 
@@ -79,6 +91,21 @@ Once configured, `npx srcpack` uploads bundles after bundling:
 ✓ api  →  .srcpack/api.txt  (18 files, 5.1 KB)
 ↑ Uploaded to Google Drive
 ```
+
+### Exclude Bundles
+
+To skip specific bundles from upload, use the `exclude` option:
+
+```ts
+upload: {
+  provider: "gdrive",
+  clientId: "...",
+  clientSecret: "...",
+  exclude: ["local", "debug"], // these bundles won't upload
+}
+```
+
+This is useful for local-only bundles that shouldn't be shared.
 
 ### Skip Upload
 

@@ -48,11 +48,14 @@ Or add to `package.json`:
 
 ### Options
 
-| Option    | Default    | Description                      |
-| --------- | ---------- | -------------------------------- |
-| `outDir`  | `.srcpack` | Output directory for bundles     |
-| `bundles` | —          | Named bundles with glob patterns |
-| `upload`  | —          | Upload destination(s)            |
+| Option        | Default    | Description                            |
+| ------------- | ---------- | -------------------------------------- |
+| `outDir`      | `.srcpack` | Output directory for bundles           |
+| `emptyOutDir` | `true`\*   | Empty output directory before bundling |
+| `bundles`     | —          | Named bundles with glob patterns       |
+| `upload`      | —          | Upload destination(s)                  |
+
+\*`emptyOutDir` defaults to `true` when `outDir` is inside project root. When `outDir` is outside root, a warning is emitted unless explicitly set.
 
 ### Bundle Config
 
@@ -70,7 +73,8 @@ Or add to `package.json`:
 {
   include: "src/**/*",
   outfile: "~/Downloads/bundle.txt",   // custom output path
-  index: true                          // include index header (default)
+  index: true,                         // include index header (default)
+  prompt: "./prompts/review.md"        // prepend from file (or inline text)
 }
 ```
 
@@ -90,6 +94,7 @@ export default defineConfig({
     folderId: "1ABC...", // Google Drive folder ID (from URL)
     clientId: "...",
     clientSecret: "...",
+    exclude: ["local"], // skip specific bundles
   },
 });
 ```
@@ -127,12 +132,14 @@ export function utils() {
 ## CLI
 
 ```bash
-npx srcpack              # Bundle all, upload if configured
-npx srcpack web api      # Bundle specific bundles only
-npx srcpack --dry-run    # Preview without writing files
-npx srcpack --no-upload  # Bundle only, skip upload
-npx srcpack init         # Interactive config setup
-npx srcpack login        # Authenticate with Google Drive
+npx srcpack                 # Bundle all, upload if configured
+npx srcpack web api         # Bundle specific bundles only
+npx srcpack --dry-run       # Preview without writing files
+npx srcpack --emptyOutDir   # Empty output directory before bundling
+npx srcpack --no-emptyOutDir # Keep existing files in output directory
+npx srcpack --no-upload     # Bundle only, skip upload
+npx srcpack init            # Interactive config setup
+npx srcpack login           # Authenticate with Google Drive
 ```
 
 ## API

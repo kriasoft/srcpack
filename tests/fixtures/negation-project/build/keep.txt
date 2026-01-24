@@ -1,0 +1,1 @@
+This file should be included despite build/** being ignored

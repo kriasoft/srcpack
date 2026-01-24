@@ -106,6 +106,41 @@ describe("parseConfig", () => {
   });
 
   describe("default values", () => {
+    test("should default root to process.cwd()", () => {
+      const config = parseConfig({
+        bundles: { web: "src/**/*" },
+      });
+
+      expect(config.root).toBe(process.cwd());
+    });
+
+    test("should resolve relative root to absolute path", () => {
+      const config = parseConfig({
+        root: "./subdir",
+        bundles: { web: "src/**/*" },
+      });
+
+      expect(config.root).toBe(join(process.cwd(), "subdir"));
+    });
+
+    test("should resolve tilde root to home directory", () => {
+      const config = parseConfig({
+        root: "~/projects",
+        bundles: { web: "src/**/*" },
+      });
+
+      expect(config.root).toBe(join(homedir(), "projects"));
+    });
+
+    test("should keep absolute root path unchanged", () => {
+      const config = parseConfig({
+        root: "/absolute/path",
+        bundles: { web: "src/**/*" },
+      });
+
+      expect(config.root).toBe("/absolute/path");
+    });
+
     test("should default outDir to .srcpack", () => {
       const config = parseConfig({
         bundles: { web: "src/**/*" },
@@ -120,6 +155,32 @@ describe("parseConfig", () => {
       });
 
       expect(config.upload).toBeUndefined();
+    });
+
+    test("should leave emptyOutDir undefined when not provided", () => {
+      const config = parseConfig({
+        bundles: { web: "src/**/*" },
+      });
+
+      expect(config.emptyOutDir).toBeUndefined();
+    });
+
+    test("should accept emptyOutDir true", () => {
+      const config = parseConfig({
+        bundles: { web: "src/**/*" },
+        emptyOutDir: true,
+      });
+
+      expect(config.emptyOutDir).toBe(true);
+    });
+
+    test("should accept emptyOutDir false", () => {
+      const config = parseConfig({
+        bundles: { web: "src/**/*" },
+        emptyOutDir: false,
+      });
+
+      expect(config.emptyOutDir).toBe(false);
     });
 
     test("should accept single upload config", () => {
@@ -162,6 +223,36 @@ describe("parseConfig", () => {
 
       expect(Array.isArray(config.upload)).toBe(true);
       expect(config.upload).toHaveLength(2);
+    });
+
+    test("should accept upload.exclude as array of bundle names", () => {
+      const config = parseConfig({
+        bundles: { web: "src/**/*", local: "local/**/*" },
+        upload: {
+          provider: "gdrive",
+          clientId: "id",
+          clientSecret: "secret",
+          exclude: ["local", "debug"],
+        },
+      });
+
+      expect((config.upload as UploadConfig).exclude).toEqual([
+        "local",
+        "debug",
+      ]);
+    });
+
+    test("should leave upload.exclude undefined when not provided", () => {
+      const config = parseConfig({
+        bundles: { web: "src/**/*" },
+        upload: {
+          provider: "gdrive",
+          clientId: "id",
+          clientSecret: "secret",
+        },
+      });
+
+      expect((config.upload as UploadConfig).exclude).toBeUndefined();
     });
   });
 
@@ -281,6 +372,11 @@ describe("type inference", () => {
     }>().toMatchTypeOf<ConfigInput>();
   });
 
+  test("Config has required root after parsing", () => {
+    expectTypeOf<Config>().toHaveProperty("root");
+    expectTypeOf<Config["root"]>().toEqualTypeOf<string>();
+  });
+
   test("Config has required outDir after parsing", () => {
     expectTypeOf<Config>().toHaveProperty("outDir");
     expectTypeOf<Config["outDir"]>().toEqualTypeOf<string>();
@@ -297,6 +393,18 @@ describe("type inference", () => {
     expectTypeOf<Config>().toHaveProperty("upload");
     expectTypeOf<Config["upload"]>().toEqualTypeOf<
       UploadConfig | UploadConfig[] | undefined
+    >();
+  });
+
+  test("Config has optional emptyOutDir property", () => {
+    expectTypeOf<Config>().toHaveProperty("emptyOutDir");
+    expectTypeOf<Config["emptyOutDir"]>().toEqualTypeOf<boolean | undefined>();
+  });
+
+  test("UploadConfig has optional exclude property", () => {
+    expectTypeOf<UploadConfig>().toHaveProperty("exclude");
+    expectTypeOf<UploadConfig["exclude"]>().toEqualTypeOf<
+      string[] | undefined
     >();
   });
 

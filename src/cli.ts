@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: MIT
 
-import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import ora from "ora";
 import { bundleOne, type BundleResult } from "./bundle.ts";
 import {
@@ -38,6 +38,31 @@ function plural(n: number, singular: string, pluralForm?: string): string {
   return n === 1 ? singular : (pluralForm ?? singular + "s");
 }
 
+function isOutDirInsideRoot(outDir: string, root: string): boolean {
+  const absoluteOutDir = isAbsolute(outDir) ? outDir : resolve(root, outDir);
+  const rel = relative(root, absoluteOutDir);
+  return !rel.startsWith("..") && !isAbsolute(rel);
+}
+
+/**
+ * Empty a directory while preserving specified entries (e.g., `.git`).
+ * Uses `force: true` to handle read-only or in-use files.
+ */
+async function emptyDirectory(dir: string, skip: string[] = []): Promise<void> {
+  let entries: string[];
+  try {
+    entries = await readdir(dir);
+  } catch {
+    return; // Directory doesn't exist, nothing to empty
+  }
+  const skipSet = new Set(skip);
+  await Promise.all(
+    entries
+      .filter((entry) => !skipSet.has(entry))
+      .map((entry) => rm(join(dir, entry), { recursive: true, force: true })),
+  );
+}
+
 async function main() {
   const args = process.argv.slice(2);
 
@@ -54,9 +79,11 @@ Usage:
   npx srcpack login        Authenticate with Google Drive
 
 Options:
-  --dry-run     Preview bundles without writing files
-  --no-upload   Skip uploading to cloud storage
-  -h, --help    Show this help message
+  --dry-run        Preview bundles without writing files
+  --emptyOutDir    Empty output directory before bundling
+  --no-emptyOutDir Keep existing files in output directory
+  --no-upload      Skip uploading to cloud storage
+  -h, --help       Show this help message
 `);
     return;
   }
@@ -73,6 +100,12 @@ Options:
 
   const dryRun = args.includes("--dry-run");
   const noUpload = args.includes("--no-upload");
+  // CLI flags: --emptyOutDir forces true, --no-emptyOutDir forces false
+  const emptyOutDirFlag = args.includes("--emptyOutDir")
+    ? true
+    : args.includes("--no-emptyOutDir")
+      ? false
+      : undefined;
   const subcommands = ["init", "login"];
   const requestedBundles = args.filter(
     (arg) => !arg.startsWith("-") && !subcommands.includes(arg),
@@ -105,7 +138,32 @@ Options:
     return;
   }
 
-  const cwd = process.cwd();
+  const root = config.root;
+
+  // Resolve emptyOutDir: CLI flag > config > auto (true if inside root)
+  const outDirInsideRoot = isOutDirInsideRoot(config.outDir, root);
+  const emptyOutDir = emptyOutDirFlag ?? config.emptyOutDir ?? outDirInsideRoot;
+
+  // Warn if outDir is outside root and emptyOutDir is not explicitly set
+  if (
+    !outDirInsideRoot &&
+    emptyOutDirFlag === undefined &&
+    config.emptyOutDir === undefined
+  ) {
+    console.warn(
+      `Warning: outDir "${config.outDir}" is outside project root. ` +
+        "Use --emptyOutDir to suppress this warning and empty the directory.",
+    );
+  }
+
+  // Empty outDir before bundling (unless dry-run)
+  if (emptyOutDir && !dryRun) {
+    const outDirPath = isAbsolute(config.outDir)
+      ? config.outDir
+      : resolve(root, config.outDir);
+    await emptyDirectory(outDirPath, [".git"]);
+  }
+
   const outputs: BundleOutput[] = [];
 
   // Process all bundles with progress
@@ -118,7 +176,7 @@ Options:
     const name = bundleNames[i]!;
     bundleSpinner.text = `Bundling ${name}... (${i + 1}/${bundleNames.length})`;
     const bundleConfig = config.bundles[name]!;
-    const result = await bundleOne(name, bundleConfig, cwd);
+    const result = await bundleOne(name, bundleConfig, root);
     const outfile = getOutfile(bundleConfig, name, config.outDir);
     outputs.push({ name, outfile, result });
   }
@@ -139,7 +197,7 @@ Options:
   for (const { name, outfile, result } of outputs) {
     const fileCount = result.index.length;
     const lineCount = sumLines(result);
-    const outPath = join(cwd, outfile);
+    const outPath = join(root, outfile);
 
     const nameCol = name.padEnd(maxNameLen);
     const filesCol = formatNumber(fileCount).padStart(maxFilesLen);
@@ -186,7 +244,7 @@ Options:
 
       for (const uploadConfig of uploads) {
         if (isGdriveConfigured(uploadConfig)) {
-          await handleGdriveUpload(uploadConfig, outputs, cwd);
+          await handleGdriveUpload(uploadConfig, outputs, root);
         }
       }
     }
@@ -277,8 +335,17 @@ function printUploadConfigHelp(): void {
 async function handleGdriveUpload(
   uploadConfig: UploadConfig,
   outputs: BundleOutput[],
-  cwd: string,
+  root: string,
 ): Promise<void> {
+  // Filter out excluded bundles
+  const excludeSet = new Set(uploadConfig.exclude ?? []);
+  const toUpload = outputs.filter((o) => !excludeSet.has(o.name));
+
+  if (toUpload.length === 0) {
+    console.log("\nNo bundles to upload (all excluded).");
+    return;
+  }
+
   try {
     await ensureAuthenticated(uploadConfig);
 
@@ -289,10 +356,10 @@ async function handleGdriveUpload(
 
     const results: UploadResult[] = [];
 
-    for (let i = 0; i < outputs.length; i++) {
-      const output = outputs[i]!;
-      const filePath = join(cwd, output.outfile);
-      uploadSpinner.text = `Uploading ${output.name}... (${i + 1}/${outputs.length})`;
+    for (let i = 0; i < toUpload.length; i++) {
+      const output = toUpload[i]!;
+      const filePath = join(root, output.outfile);
+      uploadSpinner.text = `Uploading ${output.name}... (${i + 1}/${toUpload.length})`;
       const result = await uploadFile(filePath, uploadConfig);
       results.push(result);
     }

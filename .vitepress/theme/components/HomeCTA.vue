@@ -31,7 +31,7 @@ function copyCommand() {
     </div>
     <div class="home-cta__actions">
       <a
-        href="/srcpack/guide/getting-started"
+        href="/srcpack/getting-started"
         class="home-cta__button home-cta__button--primary"
       >
         Read the Docs

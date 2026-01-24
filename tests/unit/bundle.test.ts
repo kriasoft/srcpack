@@ -18,6 +18,7 @@ const forceIncludeDir = join(
   import.meta.dir,
   "../fixtures/force-include-project",
 );
+const negationDir = join(import.meta.dir, "../fixtures/negation-project");
 
 describe("resolvePatterns", () => {
   test("should resolve string pattern", async () => {
@@ -156,6 +157,16 @@ describe("resolvePatterns", () => {
     expect(files).toContain("docs/private.local.md");
     expect(files).not.toContain("docs/guide.md");
   });
+
+  test("should respect gitignore negation patterns", async () => {
+    // .gitignore contains: build/** + !build/keep.txt
+    // The negation re-includes build/keep.txt while other build files stay ignored
+    const files = await resolvePatterns("**/*", negationDir);
+
+    expect(files).toContain("src/index.ts");
+    expect(files).toContain("build/keep.txt"); // Re-included by negation
+    expect(files).not.toContain("build/bundle.js"); // Still ignored
+  });
 });
 
 describe("formatIndex", () => {
@@ -289,6 +300,73 @@ describe("createBundle", () => {
     // Separator is line 1, content starts at line 2
     expect(result.index[0]!.startLine).toBe(2);
   });
+
+  test("should prepend prompt with separator", async () => {
+    const result = await createBundle(["src/index.ts"], fixturesDir, {
+      prompt: "Review this code for security issues.",
+    });
+
+    expect(result.content).toStartWith("Review this code for security issues.");
+    expect(result.content).toContain("\n\n---\n\n");
+    expect(result.content).toContain("# Index");
+  });
+
+  test("should adjust line numbers for prompt offset", async () => {
+    const result = await createBundle(["src/index.ts"], fixturesDir, {
+      prompt: "Review this code.",
+    });
+
+    // Prompt: 1 line + blank + "---" + blank = 4 lines
+    // Index: header + 1 entry + blank = 3 lines
+    // Separator: 1 line, content starts next line
+    // Content at: 4 + 3 + 1 + 1 = 9
+    expect(result.index[0]!.startLine).toBe(9);
+  });
+
+  test("should handle multi-line prompt", async () => {
+    const result = await createBundle(["src/index.ts"], fixturesDir, {
+      prompt: "Review this code.\nFocus on:\n- Security\n- Performance",
+    });
+
+    expect(result.content).toStartWith("Review this code.");
+    // Prompt: 4 lines + blank + "---" + blank = 7 lines
+    // Index: 3 lines, separator: 1 line, content next line
+    // Content at: 7 + 3 + 1 + 1 = 12
+    expect(result.index[0]!.startLine).toBe(12);
+  });
+
+  test("should prepend prompt without index", async () => {
+    const result = await createBundle(["src/index.ts"], fixturesDir, {
+      prompt: "Review this code.",
+      includeIndex: false,
+    });
+
+    expect(result.content).toStartWith("Review this code.");
+    expect(result.content).toContain("\n\n---\n\n");
+    expect(result.content).not.toContain("# Index");
+    // Prompt: 1 line + blank + "---" + blank = 4 lines
+    // Separator: 1 line, content next line
+    // Content at: 4 + 1 + 1 = 6
+    expect(result.index[0]!.startLine).toBe(6);
+  });
+
+  test("should ignore empty prompt", async () => {
+    const result = await createBundle(["src/index.ts"], fixturesDir, {
+      prompt: "",
+    });
+
+    expect(result.content).toStartWith("# Index");
+    expect(result.content).not.toContain("---");
+  });
+
+  test("should ignore whitespace-only prompt", async () => {
+    const result = await createBundle(["src/index.ts"], fixturesDir, {
+      prompt: "   \n  \n  ",
+    });
+
+    expect(result.content).toStartWith("# Index");
+    expect(result.content).not.toContain("---");
+  });
 });
 
 describe("bundleOne", () => {
@@ -333,5 +411,73 @@ describe("bundleOne", () => {
     );
 
     expect(result.content).toContain("# Index");
+  });
+
+  test("should prepend prompt from config", async () => {
+    const result = await bundleOne(
+      "web",
+      { include: "src/index.ts", prompt: "Review this code." },
+      fixturesDir,
+    );
+
+    expect(result.content).toStartWith("Review this code.");
+    expect(result.content).toContain("\n\n---\n\n");
+    expect(result.content).toContain("# Index");
+  });
+
+  test("should ignore empty prompt in config", async () => {
+    const result = await bundleOne(
+      "web",
+      { include: "src/index.ts", prompt: "" },
+      fixturesDir,
+    );
+
+    expect(result.content).toStartWith("# Index");
+    expect(result.content).not.toContain("---");
+  });
+
+  test("should ignore undefined prompt in config", async () => {
+    const result = await bundleOne(
+      "web",
+      { include: "src/index.ts", prompt: undefined },
+      fixturesDir,
+    );
+
+    expect(result.content).toStartWith("# Index");
+    expect(result.content).not.toContain("---");
+  });
+
+  test("should load prompt from file when path starts with ./", async () => {
+    const result = await bundleOne(
+      "web",
+      { include: "src/index.ts", prompt: "./prompts/review.md" },
+      fixturesDir,
+    );
+
+    expect(result.content).toStartWith("Review this code for:");
+    expect(result.content).toContain("- Security issues");
+    expect(result.content).toContain("\n\n---\n\n");
+  });
+
+  test("should attempt to load prompt from ~/ path", async () => {
+    // Verify ~/ paths are treated as file paths (throws for non-existent file)
+    await expect(
+      bundleOne(
+        "web",
+        { include: "src/index.ts", prompt: "~/non-existent-srcpack-test.md" },
+        fixturesDir,
+      ),
+    ).rejects.toThrow("ENOENT");
+  });
+
+  test("should use literal prompt when not a path", async () => {
+    const result = await bundleOne(
+      "web",
+      { include: "src/index.ts", prompt: "Check for bugs." },
+      fixturesDir,
+    );
+
+    expect(result.content).toStartWith("Check for bugs.");
+    expect(result.content).not.toContain("./");
   });
 });

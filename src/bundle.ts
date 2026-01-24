@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { glob } from "fast-glob";
 import picomatch from "picomatch";
 import ignore, { type Ignore } from "ignore";
-import type { BundleConfigInput } from "./config.ts";
+import { expandPath, type BundleConfigInput } from "./config.ts";
 
 // Binary file detection: check first 8KB for null bytes (same heuristic as git)
 const BINARY_CHECK_SIZE = 8192;
@@ -86,20 +86,79 @@ function isExcluded(filePath: string, matchers: Matcher[]): boolean {
 }
 
 /**
- * Load and parse .gitignore file from a directory
+ * Convert gitignore patterns to glob ignore patterns for fast-glob.
+ * This prevents traversing into ignored directories (performance optimization).
+ *
+ * Conservative approach: only convert simple, unambiguous directory patterns.
+ * Complex patterns (negations, root-anchored, globs) are left to the ignore filter.
  */
-async function loadGitignore(cwd: string): Promise<Ignore> {
+function gitignoreToGlobPatterns(lines: string[]): string[] {
+  // If any negation patterns exist, skip optimization entirely
+  // (negations could re-include files in otherwise-ignored directories)
+  const hasNegation = lines.some((line) => {
+    const trimmed = line.trim();
+    // Any line starting with ! is a negation (including !#file which negates "#file")
+    return trimmed.startsWith("!");
+  });
+  if (hasNegation) return [];
+
+  const patterns: string[] = [];
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    // Skip empty lines and comments
+    if (!trimmed || trimmed.startsWith("#")) continue;
+
+    // Skip patterns with special gitignore features we can't safely convert:
+    // - Root-anchored (starts with /)
+    // - Contains globs (*, ?, [)
+    // - Contains path separators (complex paths)
+    // - Escaped characters
+    if (
+      trimmed.startsWith("/") ||
+      trimmed.includes("*") ||
+      trimmed.includes("?") ||
+      trimmed.includes("[") ||
+      trimmed.includes("/") ||
+      trimmed.includes("\\")
+    ) {
+      continue;
+    }
+
+    // Only convert simple directory names (e.g., "node_modules", "dist")
+    // These are safe to prune at any depth
+    const name = trimmed.endsWith("/") ? trimmed.slice(0, -1) : trimmed;
+    if (name && /^[\w.-]+$/.test(name)) {
+      patterns.push(`**/${name}/**`);
+    }
+  }
+
+  return patterns;
+}
+
+interface GitignoreResult {
+  ignore: Ignore;
+  globPatterns: string[];
+}
+
+/**
+ * Load and parse .gitignore file from a directory.
+ * Returns both an Ignore instance for filtering and glob patterns for fast-glob.
+ */
+async function loadGitignore(cwd: string): Promise<GitignoreResult> {
   const ig = ignore();
   const gitignorePath = join(cwd, ".gitignore");
+  let globPatterns: string[] = [];
 
   try {
     const content = await readFile(gitignorePath, "utf-8");
     ig.add(content);
+    globPatterns = gitignoreToGlobPatterns(content.split("\n"));
   } catch {
     // No .gitignore file, return empty ignore instance
   }
 
-  return ig;
+  return { ignore: ig, globPatterns };
 }
 
 /**
@@ -114,12 +173,18 @@ export async function resolvePatterns(
 ): Promise<string[]> {
   const { include, exclude, force } = normalizePatterns(config);
   const excludeMatchers = exclude.map((p) => picomatch(p));
-  const gitignore = await loadGitignore(cwd);
+  const { ignore: gitignore, globPatterns } = await loadGitignore(cwd);
   const files = new Set<string>();
 
   // Regular includes: respect .gitignore
+  // Pass gitignore patterns to fast-glob to skip ignored directories during traversal
   if (include.length > 0) {
-    const matches = await glob(include, { cwd, onlyFiles: true, dot: true });
+    const matches = await glob(include, {
+      cwd,
+      onlyFiles: true,
+      dot: true,
+      ignore: globPatterns,
+    });
     for (const match of matches) {
       if (!isExcluded(match, excludeMatchers) && !gitignore.ignores(match)) {
         const fullPath = join(cwd, match);
@@ -130,7 +195,7 @@ export async function resolvePatterns(
     }
   }
 
-  // Force includes: bypass .gitignore
+  // Force includes: bypass .gitignore (no ignore patterns passed to glob)
   if (force.length > 0) {
     const matches = await glob(force, { cwd, onlyFiles: true, dot: true });
     for (const match of matches) {
@@ -182,6 +247,7 @@ export function formatIndex(index: FileEntry[]): string {
 
 export interface BundleOptions {
   includeIndex?: boolean; // Default: true
+  prompt?: string; // Text to prepend to bundle
 }
 
 /**
@@ -204,6 +270,8 @@ export async function createBundle(
   options: BundleOptions = {},
 ): Promise<BundleResult> {
   const { includeIndex = true } = options;
+  // Normalize prompt: trim and treat whitespace-only as no prompt
+  const prompt = options.prompt?.trim() || undefined;
   const index: FileEntry[] = [];
   const contentParts: string[] = [];
   let currentLine = 1;
@@ -232,26 +300,40 @@ export async function createBundle(
     currentLine = entry.endLine + 1;
   }
 
+  // Calculate prompt offset (prompt text + blank + "---" + blank)
+  const promptLines = prompt ? countLines(prompt) + 3 : 0;
+
   if (includeIndex) {
     // Adjust line numbers to account for index header
     // Header: "# Index (N files)" + N index lines + 1 blank line
-    const headerLines = index.length + 2;
+    const headerLines = index.length + 2 + promptLines;
     for (const entry of index) {
       entry.startLine += headerLines;
       entry.endLine += headerLines;
     }
 
     const indexBlock = formatIndex(index);
-    const content =
+    const bundleContent =
       index.length === 0
         ? indexBlock
         : indexBlock + "\n\n" + contentParts.join("\n");
 
+    const content = prompt ? `${prompt}\n\n---\n\n${bundleContent}` : bundleContent;
     return { content, index };
   }
 
   // No index: just join file content
-  const content = contentParts.join("\n");
+  const bundleContent = contentParts.join("\n");
+  const content = prompt ? `${prompt}\n\n---\n\n${bundleContent}` : bundleContent;
+
+  // Adjust line numbers for prompt offset (no index case)
+  if (promptLines > 0) {
+    for (const entry of index) {
+      entry.startLine += promptLines;
+      entry.endLine += promptLines;
+    }
+  }
+
   return { content, index };
 }
 
@@ -266,6 +348,46 @@ function getIncludeIndex(config: BundleConfigInput): boolean {
 }
 
 /**
+ * Extract the prompt option from bundle config.
+ * Returns undefined for empty/null/undefined values.
+ */
+function getPrompt(config: BundleConfigInput): string | undefined {
+  if (typeof config === "object" && !Array.isArray(config)) {
+    const prompt = config.prompt;
+    // Treat empty string, null, undefined as no prompt
+    return prompt && prompt.trim() ? prompt : undefined;
+  }
+  return undefined;
+}
+
+/**
+ * Resolve prompt value: load from file if path, otherwise return as-is.
+ * Paths starting with ./, ../, or ~/ are treated as file paths.
+ */
+async function resolvePrompt(
+  prompt: string | undefined,
+  cwd: string,
+): Promise<string | undefined> {
+  if (!prompt) return undefined;
+
+  // Check if prompt looks like a file path
+  if (prompt.startsWith("./") || prompt.startsWith("../")) {
+    const filePath = join(cwd, prompt);
+    const content = await readFile(filePath, "utf-8");
+    return content.trim() || undefined;
+  }
+
+  if (prompt.startsWith("~/")) {
+    const filePath = expandPath(prompt);
+    const content = await readFile(filePath, "utf-8");
+    return content.trim() || undefined;
+  }
+
+  // Trim inline prompts for consistent behavior with file-based prompts
+  return prompt.trim() || undefined;
+}
+
+/**
  * Bundle a single named bundle from config
  */
 export async function bundleOne(
@@ -275,5 +397,6 @@ export async function bundleOne(
 ): Promise<BundleResult> {
   const files = await resolvePatterns(config, cwd);
   const includeIndex = getIncludeIndex(config);
-  return createBundle(files, cwd, { includeIndex });
+  const prompt = await resolvePrompt(getPrompt(config), cwd);
+  return createBundle(files, cwd, { includeIndex, prompt });
 }
