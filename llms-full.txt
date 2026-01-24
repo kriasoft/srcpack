@@ -262,7 +262,7 @@ export default defineConfig({
 | Option        | Type      | Default         | Description                            |
 | ------------- | --------- | --------------- | -------------------------------------- |
 | `root`        | `string`  | `process.cwd()` | Project root directory                 |
-| `outDir`      | `string`  | `.srcpack`      | Output directory for bundles           |
+| `outDir`      | `string`  | `.srcpack`      | Output directory (relative to root)    |
 | `emptyOutDir` | `boolean` | `true`\*        | Empty output directory before bundling |
 | `bundles`     | `object`  | —               | Named bundles (required)               |
 | `upload`      | `object`  | —               | Upload destination                     |
@@ -278,6 +278,20 @@ export default defineConfig({
   root: "./packages/app", // bundle from subdirectory
   bundles: {
     app: "src/**/*", // matches packages/app/src/**/*
+  },
+});
+```
+
+### outDir
+
+Output directory for bundle files. Can be absolute or relative to project root.
+
+```ts
+export default defineConfig({
+  root: "./packages/app",
+  outDir: "dist", // writes to packages/app/dist/
+  bundles: {
+    app: "src/**/*",
   },
 });
 ```
