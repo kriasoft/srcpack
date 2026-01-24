@@ -72,7 +72,7 @@ const ConfigSchema = z.object({
    * @default process.cwd()
    */
   root: z.string().default(""),
-  /** Output directory for bundle files. Defaults to ".srcpack". */
+  /** Output directory for bundle files (relative to root). Defaults to ".srcpack". */
   outDir: z.string().default(".srcpack"),
   /** Empty outDir before bundling. Auto-enabled when outDir is inside project root. */
   emptyOutDir: z.boolean().optional(),
