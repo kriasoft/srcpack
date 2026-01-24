@@ -27,14 +27,28 @@ export default defineConfig({
 
 ## Options
 
-| Option        | Type      | Default    | Description                            |
-| ------------- | --------- | ---------- | -------------------------------------- |
-| `outDir`      | `string`  | `.srcpack` | Output directory for bundles           |
-| `emptyOutDir` | `boolean` | `true`\*   | Empty output directory before bundling |
-| `bundles`     | `object`  | —          | Named bundles (required)               |
-| `upload`      | `object`  | —          | Upload destination                     |
+| Option        | Type      | Default         | Description                            |
+| ------------- | --------- | --------------- | -------------------------------------- |
+| `root`        | `string`  | `process.cwd()` | Project root directory                 |
+| `outDir`      | `string`  | `.srcpack`      | Output directory for bundles           |
+| `emptyOutDir` | `boolean` | `true`\*        | Empty output directory before bundling |
+| `bundles`     | `object`  | —               | Named bundles (required)               |
+| `upload`      | `object`  | —               | Upload destination                     |
 
 \*`emptyOutDir` defaults to `true` when `outDir` is inside project root.
+
+### root
+
+Project root directory where files are bundled from. Can be absolute or relative to CWD.
+
+```ts
+export default defineConfig({
+  root: "./packages/app", // bundle from subdirectory
+  bundles: {
+    app: "src/**/*", // matches packages/app/src/**/*
+  },
+});
+```
 
 ## Bundle Definitions
 
@@ -72,11 +86,11 @@ bundles: {
 
 **Bundle options:**
 
-| Option    | Type                 | Default               | Description                              |
-| --------- | -------------------- | --------------------- | ---------------------------------------- |
-| `include` | `string \| string[]` | —                     | Glob pattern(s)                          |
-| `outfile` | `string`             | `{outDir}/{name}.txt` | Custom output path                       |
-| `index`   | `boolean`            | `true`                | Include index header                     |
+| Option    | Type                 | Default               | Description                               |
+| --------- | -------------------- | --------------------- | ----------------------------------------- |
+| `include` | `string \| string[]` | —                     | Glob pattern(s)                           |
+| `outfile` | `string`             | `{outDir}/{name}.txt` | Custom output path                        |
+| `index`   | `boolean`            | `true`                | Include index header                      |
 | `prompt`  | `string`             | —                     | Text or file path (`./`, `~/`) to prepend |
 
 ## Pattern Syntax
@@ -162,7 +176,7 @@ export default defineConfig({
   bundles: {
     review: {
       include: "src/**/*",
-      prompt: "./prompts/review.md",  // or inline: "Review this code..."
+      prompt: "./prompts/review.md", // or inline: "Review this code..."
     },
   },
 });
