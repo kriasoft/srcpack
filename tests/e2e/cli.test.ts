@@ -1,5 +1,7 @@
-import { join } from "node:path";
-import { describe, expect, test } from "bun:test";
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { describe, expect, test, afterEach } from "bun:test";
 
 const CLI_PATH = join(import.meta.dir, "../../src/cli.ts");
 const FIXTURE_PATH = join(import.meta.dir, "../fixtures/sample-project");
@@ -112,6 +114,38 @@ describe("cli", () => {
 
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain("Unknown bundle: unknown");
+    });
+  });
+
+  describe("absolute outDir with custom root", () => {
+    const tempRoot = join(tmpdir(), `srcpack-test-${Date.now()}`);
+    const tempOutDir = join(tmpdir(), `srcpack-out-${Date.now()}`);
+
+    afterEach(async () => {
+      await rm(tempRoot, { recursive: true, force: true });
+      await rm(tempOutDir, { recursive: true, force: true });
+    });
+
+    test("should write to absolute outDir when root is also specified", async () => {
+      // Setup: create temp project with config using absolute outDir
+      await mkdir(join(tempRoot, "src"), { recursive: true });
+      await writeFile(join(tempRoot, "src/index.ts"), "export const x = 1;");
+      await writeFile(
+        join(tempRoot, "srcpack.config.ts"),
+        `export default {
+          outDir: ${JSON.stringify(tempOutDir)},
+          bundles: { app: "src/**/*" },
+        };`,
+      );
+
+      const result = await runCli([], { cwd: tempRoot });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("app");
+
+      // Verify file was written to absolute outDir, not joined with root
+      const outFile = Bun.file(join(tempOutDir, "app.txt"));
+      expect(await outFile.exists()).toBe(true);
     });
   });
 });

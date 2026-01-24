@@ -197,7 +197,7 @@ Options:
   for (const { name, outfile, result } of outputs) {
     const fileCount = result.index.length;
     const lineCount = sumLines(result);
-    const outPath = join(root, outfile);
+    const outPath = resolve(root, outfile);
 
     const nameCol = name.padEnd(maxNameLen);
     const filesCol = formatNumber(fileCount).padStart(maxFilesLen);
@@ -213,8 +213,9 @@ Options:
     } else {
       await mkdir(dirname(outPath), { recursive: true });
       await writeFile(outPath, result.content);
+      const displayPath = relative(process.cwd(), outPath);
       console.log(
-        `  ${nameCol}  ${filesCol} ${plural(fileCount, "file")}  ${linesCol} ${plural(lineCount, "line")}  → ${outfile}`,
+        `  ${nameCol}  ${filesCol} ${plural(fileCount, "file")}  ${linesCol} ${plural(lineCount, "line")}  → ${displayPath}`,
       );
     }
   }
@@ -358,7 +359,7 @@ async function handleGdriveUpload(
 
     for (let i = 0; i < toUpload.length; i++) {
       const output = toUpload[i]!;
-      const filePath = join(root, output.outfile);
+      const filePath = resolve(root, output.outfile);
       uploadSpinner.text = `Uploading ${output.name}... (${i + 1}/${toUpload.length})`;
       const result = await uploadFile(filePath, uploadConfig);
       results.push(result);
