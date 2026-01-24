@@ -42,22 +42,12 @@ async function runCli(
   };
 }
 
-describe("real login flow", () => {
-  beforeAll(async () => {
-    // Validate required env vars
-    if (!process.env.GDRIVE_CLIENT_ID) {
-      throw new Error(
-        "GDRIVE_CLIENT_ID required. Run with:\n" +
-          "GDRIVE_CLIENT_ID=xxx GDRIVE_CLIENT_SECRET=xxx bun test:login",
-      );
-    }
-    if (!process.env.GDRIVE_CLIENT_SECRET) {
-      throw new Error(
-        "GDRIVE_CLIENT_SECRET required. Run with:\n" +
-          "GDRIVE_CLIENT_ID=xxx GDRIVE_CLIENT_SECRET=xxx bun test:login",
-      );
-    }
+const hasCredentials = !!(
+  process.env.GDRIVE_CLIENT_ID && process.env.GDRIVE_CLIENT_SECRET
+);
 
+describe.skipIf(!hasCredentials)("real login flow", () => {
+  beforeAll(async () => {
     await mkdir(TEST_OUTPUT_DIR, { recursive: true });
   });
 

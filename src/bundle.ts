@@ -318,13 +318,17 @@ export async function createBundle(
         ? indexBlock
         : indexBlock + "\n\n" + contentParts.join("\n");
 
-    const content = prompt ? `${prompt}\n\n---\n\n${bundleContent}` : bundleContent;
+    const content = prompt
+      ? `${prompt}\n\n---\n\n${bundleContent}`
+      : bundleContent;
     return { content, index };
   }
 
   // No index: just join file content
   const bundleContent = contentParts.join("\n");
-  const content = prompt ? `${prompt}\n\n---\n\n${bundleContent}` : bundleContent;
+  const content = prompt
+    ? `${prompt}\n\n---\n\n${bundleContent}`
+    : bundleContent;
 
   // Adjust line numbers for prompt offset (no index case)
   if (promptLines > 0) {

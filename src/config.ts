@@ -112,9 +112,7 @@ export function parseConfig(value: unknown): Config {
 
   const config = result.data;
   // Resolve root: absolute path, relative to CWD, or CWD if empty/unset
-  config.root = config.root
-    ? resolve(expandPath(config.root))
-    : process.cwd();
+  config.root = config.root ? resolve(expandPath(config.root)) : process.cwd();
   config.outDir = expandPath(config.outDir);
 
   for (const bundle of Object.values(config.bundles)) {
