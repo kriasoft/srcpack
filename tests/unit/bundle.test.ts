@@ -167,6 +167,40 @@ describe("resolvePatterns", () => {
     expect(files).toContain("build/keep.txt"); // Re-included by negation
     expect(files).not.toContain("build/bundle.js"); // Still ignored
   });
+
+  test("should handle patterns pointing outside cwd", async () => {
+    // Use sample-project as cwd and resolve pattern pointing to gitignore-project
+    // External patterns skip .gitignore entirely (it doesn't apply to external files)
+    const files = await resolvePatterns(
+      "../gitignore-project/src/**/*.ts",
+      fixturesDir,
+    );
+
+    // Should include files from the external directory
+    expect(files).toContain("../gitignore-project/src/index.ts");
+    expect(files).toContain("../gitignore-project/src/utils.ts");
+  });
+
+  test("should not apply cwd gitignore to external patterns", async () => {
+    // fixturesDir is sample-project; external pattern points to gitignore-project
+    // Even though "dist" is a common gitignore pattern, external paths skip .gitignore
+    const files = await resolvePatterns(
+      "../gitignore-project/dist/**/*.js",
+      fixturesDir,
+    );
+
+    expect(files).toContain("../gitignore-project/dist/bundle.js");
+  });
+
+  test("should handle ./../ prefix as external pattern", async () => {
+    // Redundant ./ prefix should still be recognized as external
+    const files = await resolvePatterns(
+      "./../gitignore-project/src/**/*.ts",
+      fixturesDir,
+    );
+
+    expect(files).toContain("./../gitignore-project/src/index.ts");
+  });
 });
 
 describe("formatIndex", () => {
