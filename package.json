@@ -1,6 +1,6 @@
 {
   "name": "srcpack",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "description": "Zero-config CLI for bundling code into LLM-optimized context files",
   "keywords": [
     "llm",

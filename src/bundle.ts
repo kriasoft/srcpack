@@ -162,10 +162,21 @@ async function loadGitignore(cwd: string): Promise<GitignoreResult> {
 }
 
 /**
+ * Check if a glob pattern references paths outside cwd.
+ * Patterns traversing to parent directories start with ../ (or ./../).
+ */
+function isExternalPattern(pattern: string): boolean {
+  // Handle redundant ./ prefix (e.g., ./../other)
+  const normalized = pattern.startsWith("./") ? pattern.slice(2) : pattern;
+  return normalized.startsWith("../");
+}
+
+/**
  * Resolve bundle config to a list of file paths.
  * - Regular patterns respect .gitignore
  * - Force patterns (+prefix) bypass .gitignore
  * - Exclude patterns (!prefix) filter both
+ * - External patterns (../) skip .gitignore entirely
  */
 export async function resolvePatterns(
   config: BundleConfigInput,
@@ -176,10 +187,13 @@ export async function resolvePatterns(
   const { ignore: gitignore, globPatterns } = await loadGitignore(cwd);
   const files = new Set<string>();
 
-  // Regular includes: respect .gitignore
-  // Pass gitignore patterns to fast-glob to skip ignored directories during traversal
-  if (include.length > 0) {
-    const matches = await glob(include, {
+  // Split patterns into internal (within cwd) and external (../ prefixed)
+  const internalPatterns = include.filter((p) => !isExternalPattern(p));
+  const externalPatterns = include.filter(isExternalPattern);
+
+  // Internal patterns: respect .gitignore
+  if (internalPatterns.length > 0) {
+    const matches = await glob(internalPatterns, {
       cwd,
       onlyFiles: true,
       dot: true,
@@ -187,6 +201,23 @@ export async function resolvePatterns(
     });
     for (const match of matches) {
       if (!isExcluded(match, excludeMatchers) && !gitignore.ignores(match)) {
+        const fullPath = join(cwd, match);
+        if (!(await isBinary(fullPath))) {
+          files.add(match);
+        }
+      }
+    }
+  }
+
+  // External patterns: skip .gitignore (it doesn't apply outside cwd)
+  if (externalPatterns.length > 0) {
+    const matches = await glob(externalPatterns, {
+      cwd,
+      onlyFiles: true,
+      dot: true,
+    });
+    for (const match of matches) {
+      if (!isExcluded(match, excludeMatchers)) {
         const fullPath = join(cwd, match);
         if (!(await isBinary(fullPath))) {
           files.add(match);
