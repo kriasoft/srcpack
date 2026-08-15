@@ -1,16 +1,18 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: MIT
 
-import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import ora from "ora";
 import { bundleOne, type BundleResult } from "./bundle.ts";
 import {
   ConfigError,
   loadConfig,
+  parseConfig,
   type BundleConfig,
   type UploadConfig,
 } from "./config.ts";
+import { GitError } from "./git.ts";
 import {
   ensureAuthenticated,
   login,
@@ -38,10 +40,10 @@ function plural(n: number, singular: string, pluralForm?: string): string {
   return n === 1 ? singular : (pluralForm ?? singular + "s");
 }
 
-function isOutDirInsideRoot(outDir: string, root: string): boolean {
-  const absoluteOutDir = isAbsolute(outDir) ? outDir : resolve(root, outDir);
-  const rel = relative(root, absoluteOutDir);
-  return !rel.startsWith("..") && !isAbsolute(rel);
+function isInside(path: string, dir: string): boolean {
+  const rel = relative(dir, path);
+  // Compare against ".." as a whole segment — "..cache/x" is a child, not an escape
+  return rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
 }
 
 /**
@@ -63,8 +65,69 @@ async function emptyDirectory(dir: string, skip: string[] = []): Promise<void> {
   );
 }
 
+/**
+ * One-off bundle from a `git:` source instead of a configured one. Needs no
+ * config file — reviewing what you just wrote is throwaway, not worth committing.
+ */
+interface AdHocBundle {
+  name: string;
+  patterns: string[];
+}
+
+const AD_HOC_FLAGS = ["--staged", "--dirty", "--since"] as const;
+
+function parseAdHocBundle(args: string[]): AdHocBundle | null {
+  const flags = AD_HOC_FLAGS.filter((flag) => args.includes(flag));
+
+  if (flags.length > 1) {
+    console.error(`Cannot combine ${flags.join(" and ")}.`);
+    process.exit(1);
+  }
+
+  switch (flags[0]) {
+    case "--staged":
+      return { name: "staged", patterns: ["git:staged"] };
+    case "--dirty":
+      return { name: "dirty", patterns: ["git:dirty"] };
+    case "--since": {
+      const rev = args[args.indexOf("--since") + 1];
+      if (!rev || rev.startsWith("-")) {
+        console.error("Missing revision: --since <rev> (e.g. --since main)");
+        process.exit(1);
+      }
+      // A range pins both endpoints, so it would silently drop the uncommitted
+      // work --since promises. Ranges belong in a config `git:` source.
+      if (rev.includes("..")) {
+        console.error(
+          `--since takes a revision, not a range: "${rev}". Use a git: source in your config for ranges.`,
+        );
+        process.exit(1);
+      }
+      // `git diff` can't see untracked files, but a new file written on this
+      // branch is part of "what changed since <rev>"
+      return { name: "since", patterns: [`git:${rev}`, "git:untracked"] };
+    }
+    default:
+      return null;
+  }
+}
+
+/** Resolves to the package root from both `src/cli.ts` and `dist/cli.js`. */
+async function readVersion(): Promise<string> {
+  const pkg = await readFile(
+    new URL("../package.json", import.meta.url),
+    "utf-8",
+  );
+  return (JSON.parse(pkg) as { version: string }).version;
+}
+
 async function main() {
   const args = process.argv.slice(2);
+
+  if (args.includes("--version") || args.includes("-v")) {
+    console.log(await readVersion());
+    return;
+  }
 
   if (args.includes("--help") || args.includes("-h")) {
     console.log(`
@@ -73,27 +136,34 @@ srcpack - Bundle and upload tool
 Usage:
   npx srcpack              Bundle all, upload if configured
   npx srcpack web api      Bundle specific bundles only
+  npx srcpack --staged     Bundle staged changes (no config needed)
   npx srcpack --dry-run    Preview bundles without writing files
   npx srcpack --no-upload  Bundle only, skip upload
   npx srcpack init         Interactive config setup
   npx srcpack login        Authenticate with Google Drive
 
 Options:
+  --staged         Bundle staged changes only
+  --dirty          Bundle staged, unstaged, and untracked changes
+  --since <rev>    Bundle changes since <rev> (e.g. --since main)
   --dry-run        Preview bundles without writing files
   --emptyOutDir    Empty output directory before bundling
   --no-emptyOutDir Keep existing files in output directory
   --no-upload      Skip uploading to cloud storage
   -h, --help       Show this help message
+  -v, --version    Show version
 `);
     return;
   }
 
-  if (args.includes("init")) {
+  // Only in first position: elsewhere the word is a bundle name or a revision,
+  // and `--since init` must diff against the `init` branch, not run the wizard.
+  if (args[0] === "init") {
     await runInit();
     return;
   }
 
-  if (args.includes("login")) {
+  if (args[0] === "login") {
     await runLogin();
     return;
   }
@@ -106,28 +176,41 @@ Options:
     : args.includes("--no-emptyOutDir")
       ? false
       : undefined;
-  const subcommands = ["init", "login"];
+  const adHoc = parseAdHocBundle(args);
+  const sinceIndex = args.indexOf("--since");
+  const sinceValueIndex = sinceIndex === -1 ? -1 : sinceIndex + 1;
   const requestedBundles = args.filter(
-    (arg) => !arg.startsWith("-") && !subcommands.includes(arg),
+    (arg, i) => !arg.startsWith("-") && i !== sinceValueIndex,
   );
 
-  const config = await loadConfig();
-
-  if (!config) {
-    console.error(
-      "No configuration found. Run `npx srcpack init` to create one.",
-    );
+  if (adHoc && requestedBundles.length) {
+    console.error(`Cannot combine --${adHoc.name} with named bundles.`);
     process.exit(1);
   }
+
+  let config = await loadConfig();
+
+  if (!config) {
+    if (!adHoc) {
+      console.error(
+        "No configuration found. Run `npx srcpack init` to create one.",
+      );
+      process.exit(1);
+    }
+    // Ad-hoc bundles are self-describing, so defaults are enough
+    config = parseConfig({ bundles: {} });
+  }
+
+  const bundles = adHoc ? { [adHoc.name]: adHoc.patterns } : config.bundles;
 
   // Determine which bundles to process
   const bundleNames = requestedBundles.length
     ? requestedBundles
-    : Object.keys(config.bundles);
+    : Object.keys(bundles);
 
   // Validate requested bundle names exist
   for (const name of bundleNames) {
-    if (!(name in config.bundles)) {
+    if (!(name in bundles)) {
       console.error(`Unknown bundle: ${name}`);
       process.exit(1);
     }
@@ -140,12 +223,17 @@ Options:
 
   const root = config.root;
 
-  // Resolve emptyOutDir: CLI flag > config > auto (true if inside root)
-  const outDirInsideRoot = isOutDirInsideRoot(config.outDir, root);
-  const emptyOutDir = emptyOutDirFlag ?? config.emptyOutDir ?? outDirInsideRoot;
+  // Resolve emptyOutDir: CLI flag > config > auto (true if inside root).
+  // Ad-hoc runs never empty by default — they shouldn't delete configured bundles.
+  const outDirPath = resolve(root, config.outDir);
+  const outDirInsideRoot = isInside(outDirPath, root);
+  const emptyOutDir =
+    emptyOutDirFlag ??
+    (adHoc ? false : (config.emptyOutDir ?? outDirInsideRoot));
 
   // Warn if outDir is outside root and emptyOutDir is not explicitly set
   if (
+    !adHoc &&
     !outDirInsideRoot &&
     emptyOutDirFlag === undefined &&
     config.emptyOutDir === undefined
@@ -156,13 +244,30 @@ Options:
     );
   }
 
-  // Empty outDir before bundling (unless dry-run)
-  if (emptyOutDir && !dryRun) {
-    const outDirPath = isAbsolute(config.outDir)
-      ? config.outDir
-      : resolve(root, config.outDir);
+  // `outDir: "."` resolves to the project root, where emptying deletes the
+  // whole project — sources, config and all. Refuse rather than warn.
+  const outDirHoldsRoot = isInside(root, outDirPath);
+  if (emptyOutDir && outDirHoldsRoot) {
+    throw new ConfigError(
+      `Refusing to empty outDir "${config.outDir}": it contains the project root. ` +
+        "Use a subdirectory, or set emptyOutDir: false.",
+    );
+  }
+
+  // Empty outDir before bundling (unless dry-run). Only for a full run: a named
+  // subset can't tell what is stale, so `srcpack web` must not delete api.txt.
+  if (emptyOutDir && !dryRun && requestedBundles.length === 0) {
     await emptyDirectory(outDirPath, [".git"]);
   }
+
+  // srcpack never bundles what srcpack writes. Every configured outfile is
+  // named explicitly; outDir covers stale bundles from renamed config entries
+  // too, but not when it holds the root — that would exclude the whole project.
+  const ownOutputs = Object.entries(config.bundles).map(
+    ([name, bundleConfig]) =>
+      resolve(root, getOutfile(bundleConfig, name, config.outDir)),
+  );
+  if (!outDirHoldsRoot) ownOutputs.push(outDirPath);
 
   const outputs: BundleOutput[] = [];
 
@@ -172,16 +277,18 @@ Options:
     color: "cyan",
   }).start();
 
-  for (let i = 0; i < bundleNames.length; i++) {
-    const name = bundleNames[i]!;
-    bundleSpinner.text = `Bundling ${name}... (${i + 1}/${bundleNames.length})`;
-    const bundleConfig = config.bundles[name]!;
-    const result = await bundleOne(name, bundleConfig, root);
-    const outfile = getOutfile(bundleConfig, name, config.outDir);
-    outputs.push({ name, outfile, result });
+  try {
+    for (let i = 0; i < bundleNames.length; i++) {
+      const name = bundleNames[i]!;
+      bundleSpinner.text = `Bundling ${name}... (${i + 1}/${bundleNames.length})`;
+      const bundleConfig = bundles[name]!;
+      const result = await bundleOne(bundleConfig, root, ownOutputs);
+      const outfile = getOutfile(bundleConfig, name, config.outDir);
+      outputs.push({ name, outfile, result });
+    }
+  } finally {
+    bundleSpinner.stop();
   }
-
-  bundleSpinner.stop();
 
   // Calculate column widths for aligned output
   const maxNameLen = Math.max(...outputs.map((o) => o.name.length));
@@ -210,6 +317,15 @@ Options:
       for (const entry of result.index) {
         console.log(`    ${entry.path}`);
       }
+    } else if (fileCount === 0) {
+      // Drop a previous run's file so the bundle never goes stale, but only
+      // inside outDir — a custom outfile points at a location srcpack doesn't own
+      if (isInside(outPath, outDirPath)) {
+        await rm(outPath, { force: true });
+      }
+      console.log(
+        `  ${nameCol}  ${filesCol} ${plural(fileCount, "file")}  ${linesCol} ${plural(lineCount, "line")}  → skipped`,
+      );
     } else {
       await mkdir(dirname(outPath), { recursive: true });
       await writeFile(outPath, result.content);
@@ -237,8 +353,10 @@ Options:
       `Bundled: ${outputs.length} ${bundleWord}, ${formatNumber(totalFiles)} ${fileWord}, ${formatNumber(totalLines)} ${lineWord}`,
     );
 
-    // Handle upload if configured and not disabled
-    if (config.upload && !noUpload) {
+    // Ad-hoc bundles stay local: uploading work-in-progress to Drive is not
+    // what --staged asks for, and `upload.exclude` can't name a bundle the
+    // config doesn't declare. Configure a named bundle to publish changes.
+    if (config.upload && !noUpload && !adHoc) {
       const uploads = Array.isArray(config.upload)
         ? config.upload
         : [config.upload];
@@ -338,12 +456,14 @@ async function handleGdriveUpload(
   outputs: BundleOutput[],
   root: string,
 ): Promise<void> {
-  // Filter out excluded bundles
+  // Filter out excluded bundles and empty ones (never written to disk)
   const excludeSet = new Set(uploadConfig.exclude ?? []);
-  const toUpload = outputs.filter((o) => !excludeSet.has(o.name));
+  const toUpload = outputs.filter(
+    (o) => !excludeSet.has(o.name) && o.result.index.length > 0,
+  );
 
   if (toUpload.length === 0) {
-    console.log("\nNo bundles to upload (all excluded).");
+    console.log("\nNo bundles to upload.");
     return;
   }
 
@@ -357,15 +477,17 @@ async function handleGdriveUpload(
 
     const results: UploadResult[] = [];
 
-    for (let i = 0; i < toUpload.length; i++) {
-      const output = toUpload[i]!;
-      const filePath = resolve(root, output.outfile);
-      uploadSpinner.text = `Uploading ${output.name}... (${i + 1}/${toUpload.length})`;
-      const result = await uploadFile(filePath, uploadConfig);
-      results.push(result);
+    try {
+      for (let i = 0; i < toUpload.length; i++) {
+        const output = toUpload[i]!;
+        const filePath = resolve(root, output.outfile);
+        uploadSpinner.text = `Uploading ${output.name}... (${i + 1}/${toUpload.length})`;
+        const result = await uploadFile(filePath, uploadConfig);
+        results.push(result);
+      }
+    } finally {
+      uploadSpinner.stop();
     }
-
-    uploadSpinner.stop();
 
     // Print upload summary
     console.log();
@@ -385,6 +507,8 @@ async function handleGdriveUpload(
       if (error.error_description) {
         console.error(`  ${error.error_description}`);
       }
+      // A failed upload must not report success — CI depends on the exit code
+      process.exitCode = 1;
     } else {
       throw error;
     }
@@ -407,6 +531,9 @@ function getOutfile(
 }
 
 main().catch((err) => {
-  console.error(err);
+  // Config and git failures are user-facing; a stack trace only adds noise
+  console.error(
+    err instanceof ConfigError || err instanceof GitError ? err.message : err,
+  );
   process.exit(1);
 });

@@ -24,7 +24,10 @@ features:
   - icon: 📑
     title: Indexed Output
     details: File list with line numbers at top. LLMs can reference exact locations.
+  - icon: 🔀
+    title: Git-Aware
+    details: Bundle what you changed. srcpack --staged works with no config at all.
   - icon: 🔒
     title: Safe Defaults
-    details: Respects .gitignore. Excludes binaries and secrets. Zero config to start.
+    details: Respects .gitignore, so secrets stay out. Skips binaries. Zero config to start.
 ---

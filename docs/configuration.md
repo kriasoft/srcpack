@@ -3,8 +3,27 @@
 Srcpack looks for configuration in the following order:
 
 1. `srcpack.config.ts` (recommended)
-2. `srcpack.config.js`
-3. `srcpack` field in `package.json`
+2. `srcpack.config.mts`
+3. `srcpack.config.js`
+4. `srcpack` field in `package.json`
+
+## Config File Format
+
+Node decides a `.ts` file's module format from the nearest `package.json`, so
+in a CommonJS project — the `npm init` default — the `import` line in a
+`.ts` config fails to parse. Use `.mts` there: it is unconditionally ESM and
+loads in both kinds of project.
+
+`srcpack init` picks the right extension for you. If you are writing the file
+by hand:
+
+| Your `package.json`      | Use                  |
+| ------------------------ | -------------------- |
+| `"type": "module"`       | `srcpack.config.ts`  |
+| no `type`, or `commonjs` | `srcpack.config.mts` |
+
+Config files are type-stripped, not compiled, so they must use erasable syntax
+— type annotations and `import type` are fine, `enum` and `namespace` are not.
 
 ## Basic Structure
 
@@ -61,6 +80,13 @@ export default defineConfig({
 });
 ```
 
+`outDir` is emptied before bundling when it sits inside the project root, so
+give srcpack a directory of its own. Pointing it at the root itself (`"."`)
+is refused rather than emptied — that would delete the project.
+
+Emptying only happens on a full run. `srcpack web` leaves the bundles it isn't
+building in place, since it has no way to tell which of them are stale.
+
 ## Bundle Definitions
 
 Each bundle can be defined in three ways:
@@ -116,6 +142,7 @@ Patterns follow standard glob syntax with special prefixes:
 | `!**/*.test.ts`  | Exclude test files                 |
 | `+**/*.local.md` | Force-include, bypass `.gitignore` |
 | `{src,lib}/**/*` | Files in `src/` or `lib/`          |
+| `git:staged`     | Staged changes (see below)         |
 
 ### Force-Include (`+` prefix)
 
@@ -130,15 +157,59 @@ bundles: {
 }
 ```
 
+### Git Sources (`git:` prefix)
+
+A pattern can name a set of changed files instead of a glob:
+
+| Source          | Files                                                 |
+| --------------- | ----------------------------------------------------- |
+| `git:staged`    | Staged changes (index vs `HEAD`)                      |
+| `git:unstaged`  | Unstaged changes to tracked files (worktree vs index) |
+| `git:untracked` | New files not ignored by git                          |
+| `git:dirty`     | All three combined                                    |
+| `git:<rev>`     | Changes vs `<rev>` (e.g. `git:main`, `git:HEAD~3`)    |
+
+```ts
+bundles: {
+  review: {
+    include: ["git:staged", "!bun.lock"],
+    prompt: "Review these changes for correctness.",
+  },
+}
+```
+
+Git sources mix freely with each other, with globs, and with `!` exclusions:
+
+```ts
+bundles: {
+  pr: ["git:main", "git:untracked", "docs/architecture.md", "!**/*.snap"],
+}
+```
+
+Notes:
+
+- **A git source picks _which_ files to bundle; content always comes from the worktree.** If a file is staged and then edited again, `git:staged` bundles the current version on disk, not the staged blob.
+- **`git:<rev>` compares against the merge base**, so a branch that has fallen behind `main` still reports only your own changes. Uncommitted edits to tracked files are included; untracked files are not — add `git:untracked` for those. Ranges (`git:main...HEAD`, `git:HEAD~3..HEAD`) pass through to git verbatim and cover committed changes only. Requires git 2.30+.
+- **Deleted files are skipped** — there is nothing left to read. Same for binary files and submodules.
+- **Symlinks are skipped**, in git sources and globs alike. A tracked link like `notes.txt -> ~/.ssh/id_rsa` would otherwise pull a file from outside the project into a bundle you might upload. Point a pattern at the real path instead.
+- **`.gitignore` does not apply.** A file tracked despite `.gitignore` (force-added) is included; an ignored file is never reported by git in the first place.
+- **A branch named `staged` is shadowed** by the named source. Use `git:refs/heads/staged` to disambiguate.
+- **An empty result writes no file**, and clears a stale one from a previous run, so a bundle never holds changes you've since committed. A custom `outfile` outside `outDir` is left alone.
+- `!git:...` and `+git:...` are errors: exclusion has no clear meaning, and force-include is already implied.
+
 ## Automatic Exclusions
 
-Srcpack automatically excludes:
+Srcpack skips:
 
-- Files matching `.gitignore` patterns
-- Binary files (images, fonts, compiled assets)
-- `node_modules/`
-- `.git/`
-- Lock files (`package-lock.json`, `yarn.lock`, etc.)
+- Files matching `.gitignore` — including `node_modules/`, build output, and
+  secrets, since those are already ignored in any normal project
+- Binary files (images, fonts, compiled assets), detected by content
+- Symlinks, so a link can't pull in a file from outside the project
+- Its own output — `outDir` and every configured `outfile`. Otherwise a rerun
+  would bundle the previous run's file, nesting it again each time.
+
+Everything else matched by a pattern is included, so exclude what you don't
+want explicitly: `["src/**/*", "!bun.lock"]`.
 
 ## Examples
 
@@ -211,9 +282,7 @@ Configure cloud upload destinations. See [Google Drive Upload](/upload) for setu
 
 ```ts
 export default defineConfig({
-  bundles: {
-    /* ... */
-  },
+  bundles: {/* ... */},
   upload: {
     provider: "gdrive",
     folderId: "1ABC...",

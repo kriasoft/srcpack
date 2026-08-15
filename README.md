@@ -2,7 +2,7 @@
 
 Zero-config CLI for bundling code into LLM-optimized context files.
 
-**Requirements:** Node.js 20+ or Bun
+**Requirements:** Node.js 22.18+ or Bun
 
 ## Quick Start
 
@@ -17,7 +17,7 @@ LLM context fails when codebases are large, noisy, or poorly organized. Srcpack 
 
 ## Configuration
 
-Create `srcpack.config.ts` in your project root:
+Create `srcpack.config.ts` in your project root (use `srcpack.config.mts` if your `package.json` lacks `"type": "module"` — `srcpack init` picks the right one):
 
 ```typescript
 import { defineConfig } from "srcpack";
@@ -55,7 +55,7 @@ Or add to `package.json`:
 | `bundles`     | —          | Named bundles with glob patterns       |
 | `upload`      | —          | Upload destination(s)                  |
 
-\*`emptyOutDir` defaults to `true` when `outDir` is inside project root. When `outDir` is outside root, a warning is emitted unless explicitly set.
+\*`emptyOutDir` defaults to `true` when `outDir` is inside project root. When `outDir` is outside root, a warning is emitted unless explicitly set. Emptying happens only on a full run, so `npx srcpack web` leaves other bundles in place.
 
 ### Bundle Config
 
@@ -69,6 +69,9 @@ Or add to `package.json`:
 // Force-include gitignored files (+ prefix)
 ["docs/**/*", "+docs/**/*.local.md"]
 
+// Changed files instead of a glob (git: prefix)
+["git:staged", "!bun.lock"]
+
 // Full options
 {
   include: "src/**/*",
@@ -80,15 +83,15 @@ Or add to `package.json`:
 
 Patterns follow glob syntax. Prefix with `!` to exclude, `+` to force-include (bypasses `.gitignore`). Binary files are excluded.
 
+A pattern can also name a set of changed files: `git:staged`, `git:unstaged`, `git:untracked`, `git:dirty`, or `git:<rev>` (e.g. `git:main`, `git:HEAD~3`). Deleted files are skipped, and `git:<rev>` compares against the merge base so a stale branch still reports only your own changes. See [Git sources](https://kriasoft.com/srcpack/configuration#git-sources-git-prefix).
+
 ### Google Drive Upload
 
 To upload bundles to Google Drive, add OAuth credentials to your config:
 
 ```typescript
 export default defineConfig({
-  bundles: {
-    /* ... */
-  },
+  bundles: {/* ... */},
   upload: {
     provider: "gdrive",
     folderId: "1ABC...", // Google Drive folder ID (from URL)
@@ -134,6 +137,9 @@ export function utils() {
 ```bash
 npx srcpack                 # Bundle all, upload if configured
 npx srcpack web api         # Bundle specific bundles only
+npx srcpack --staged        # Bundle staged changes (no config needed)
+npx srcpack --dirty         # Bundle staged + unstaged + untracked
+npx srcpack --since main    # Bundle changes since main
 npx srcpack --dry-run       # Preview without writing files
 npx srcpack --emptyOutDir   # Empty output directory before bundling
 npx srcpack --no-emptyOutDir # Keep existing files in output directory

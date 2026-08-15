@@ -1,10 +1,15 @@
 // SPDX-License-Identifier: MIT
 
+import { spawn } from "node:child_process";
 import { createReadStream } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, basename } from "node:path";
 import { drive as createDrive, type drive_v3 } from "@googleapis/drive";
+// Exact-pinned in package.json: googleapis-common pins google-auth-library to a
+// single version, and createDrive() only accepts that copy's OAuth2Client. A
+// caret range resolves a second copy whose private fields fail to structurally
+// match. Bump this in lockstep with @googleapis/drive.
 import { OAuth2Client } from "google-auth-library";
 import { getAuthCode, OAuthError } from "oauth-callback";
 import type { UploadConfig } from "./config.ts";
@@ -51,15 +56,21 @@ async function readCredentials(): Promise<CredentialsFile> {
 }
 
 async function writeCredentials(creds: CredentialsFile): Promise<void> {
-  await mkdir(dirname(CREDENTIALS_PATH), { recursive: true });
-  await writeFile(CREDENTIALS_PATH, JSON.stringify(creds, null, 2));
+  // A refresh token grants lasting access to the user's Drive, so keep it
+  // owner-only. `mode` applies at creation; chmod also fixes files written
+  // by an older version with the default 0644.
+  await mkdir(dirname(CREDENTIALS_PATH), { recursive: true, mode: 0o700 });
+  await writeFile(CREDENTIALS_PATH, JSON.stringify(creds, null, 2), {
+    mode: 0o600,
+  });
+  await chmod(CREDENTIALS_PATH, 0o600);
 }
 
 /**
  * Loads stored tokens for a specific OAuth client.
  * Returns null if no tokens exist or they cannot be read.
  */
-export async function loadTokens(config: UploadConfig): Promise<Tokens | null> {
+async function loadTokens(config: UploadConfig): Promise<Tokens | null> {
   const creds = await readCredentials();
   return creds.gdrive?.[config.clientId] ?? null;
 }
@@ -72,17 +83,6 @@ async function saveTokens(tokens: Tokens, config: UploadConfig): Promise<void> {
   creds.gdrive ??= {};
   creds.gdrive[config.clientId] = tokens;
   await writeCredentials(creds);
-}
-
-/**
- * Removes stored tokens for a specific OAuth client.
- */
-export async function clearTokens(config: UploadConfig): Promise<void> {
-  const creds = await readCredentials();
-  if (creds.gdrive?.[config.clientId]) {
-    delete creds.gdrive[config.clientId];
-    await writeCredentials(creds);
-  }
 }
 
 /**
@@ -134,9 +134,7 @@ async function refreshAccessToken(
  * Gets valid tokens, refreshing if necessary.
  * Returns null if no tokens exist or refresh fails.
  */
-export async function getValidTokens(
-  config: UploadConfig,
-): Promise<Tokens | null> {
+async function getValidTokens(config: UploadConfig): Promise<Tokens | null> {
   const tokens = await loadTokens(config);
   if (!tokens) return null;
 
@@ -149,6 +147,23 @@ export async function getValidTokens(
   }
 
   return tokens;
+}
+
+/**
+ * Opens the consent page in the default browser. oauth-callback made launching
+ * opt-in in v2 and swallows launcher errors, so the URL is printed as well —
+ * otherwise a headless machine waits out the timeout with nothing on screen.
+ */
+function launchBrowser(url: string): void {
+  console.log(`If the browser does not open, visit:\n${url}`);
+  const isWindows = process.platform === "win32";
+  const command = isWindows
+    ? "cmd"
+    : process.platform === "darwin"
+      ? "open"
+      : "xdg-open";
+  const args = isWindows ? ["/c", "start", "", url] : [url];
+  spawn(command, args, { stdio: "ignore", detached: true }).unref();
 }
 
 /**
@@ -170,6 +185,7 @@ export async function login(config: UploadConfig): Promise<Tokens> {
 
   const result = await getAuthCode({
     authorizationUrl: authUrl,
+    launch: launchBrowser,
     port: 3000,
     timeout: 300000, // 5 minutes
   });
@@ -246,6 +262,15 @@ function createDriveClient(
 }
 
 /**
+ * Escape a value for a single-quoted Drive query term. An unescaped quote
+ * changes what the query matches, so `notes'.txt` could resolve to an
+ * unrelated file — which the caller then overwrites.
+ */
+export function escapeQueryValue(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+}
+
+/**
  * Finds a file by name in a specific folder (or root).
  * Returns the file ID if found, null otherwise.
  */
@@ -254,8 +279,8 @@ async function findFile(
   name: string,
   folderId?: string,
 ): Promise<string | null> {
-  const parent = folderId ?? "root";
-  const query = `name = '${name}' and '${parent}' in parents and trashed = false`;
+  const parent = escapeQueryValue(folderId ?? "root");
+  const query = `name = '${escapeQueryValue(name)}' and '${parent}' in parents and trashed = false`;
 
   const res = await drive.files.list({
     q: query,
@@ -322,21 +347,6 @@ export async function uploadFile(
     name: res.data.name!,
     webViewLink: res.data.webViewLink ?? undefined,
   };
-}
-
-/**
- * Uploads multiple files to Google Drive.
- */
-export async function uploadFiles(
-  filePaths: string[],
-  config: UploadConfig,
-): Promise<UploadResult[]> {
-  const results: UploadResult[] = [];
-  for (const filePath of filePaths) {
-    const result = await uploadFile(filePath, config);
-    results.push(result);
-  }
-  return results;
 }
 
 export { OAuthError };

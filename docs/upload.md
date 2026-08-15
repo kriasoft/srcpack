@@ -163,9 +163,7 @@ For CI/CD or shared configs, use environment variables:
 
 ```ts
 export default defineConfig({
-  bundles: {
-    /* ... */
-  },
+  bundles: {/* ... */},
   upload: {
     provider: "gdrive",
     folderId: process.env.GDRIVE_FOLDER_ID,
