@@ -227,10 +227,10 @@ A bundle can pull issues from [Linear](https://linear.app) alongside your code. 
 
 ```
 # Index (4 files)
-# [1]  docs/roadmap.md            L7-L92   (86 lines)
-# [2]  linear/issues/ENG-123.md   L94-L121 (28 lines)
-# [3]  linear/issues/ENG-148.md   L123-L158 (36 lines)
-# [4]  src/board.ts               L160-L288 (129 lines)
+# [1]   docs/roadmap.md  L8-L93 (86 lines)
+# [2]   linear/issues/ENG-123.md  L95-L122 (28 lines)
+# [3]   linear/issues/ENG-148.md  L124-L159 (36 lines)
+# [4]   src/board.ts  L161-L289 (129 lines)
 ```
 
 That lets you ask an LLM things like _"does `[4] src/board.ts` actually implement `[2] ENG-123`?"_

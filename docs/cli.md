@@ -176,8 +176,8 @@ Opens a browser to authorize access. Tokens are stored in `~/.config/srcpack/cre
 | `--emptyOutDir`    | Empty the output directory before writing      |
 | `--no-emptyOutDir` | Keep what is already in the output directory   |
 | `--no-upload`      | Bundle only, skip upload                       |
-| `--help`           | Show help                                      |
-| `--version`        | Show version                                   |
+| `-h`, `--help`     | Show help                                      |
+| `-v`, `--version`  | Show version                                   |
 
 An unrecognized option is an error, not a no-op — `--no-uplaod` would otherwise
 upload, and `--dry-rnu` would write.
@@ -213,7 +213,7 @@ Output:
     src/api/routes.ts
     src/index.ts
     src/utils/helpers.ts
-  docs  1 file    96 lines
+  docs  1 file   96 lines
     README.md
 
 Dry run: 2 bundles, 4 files, 938 lines
