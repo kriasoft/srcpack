@@ -3,8 +3,27 @@
 Srcpack looks for configuration in the following order:
 
 1. `srcpack.config.ts` (recommended)
-2. `srcpack.config.js`
-3. `srcpack` field in `package.json`
+2. `srcpack.config.mts`
+3. `srcpack.config.js`
+4. `srcpack` field in `package.json`
+
+## Config File Format
+
+Node decides a `.ts` file's module format from the nearest `package.json`, so
+in a CommonJS project — the `npm init` default — the `import` line in a
+`.ts` config fails to parse. Use `.mts` there: it is unconditionally ESM and
+loads in both kinds of project.
+
+`srcpack init` picks the right extension for you. If you are writing the file
+by hand:
+
+| Your `package.json`      | Use                  |
+| ------------------------ | -------------------- |
+| `"type": "module"`       | `srcpack.config.ts`  |
+| no `type`, or `commonjs` | `srcpack.config.mts` |
+
+Config files are type-stripped, not compiled, so they must use erasable syntax
+— type annotations and `import type` are fine, `enum` and `namespace` are not.
 
 ## Basic Structure
 

@@ -1,5 +1,25 @@
 import { describe, expect, test } from "bun:test";
-import { generateConfig } from "../../src/init.ts";
+import { configFileName, generateConfig } from "../../src/init.ts";
+
+/**
+ * Node picks a `.ts` file's module format from the nearest package.json, so
+ * the generated config — which opens with `import { defineConfig }` — is a
+ * syntax error in a CommonJS project. `.mts` is ESM either way.
+ */
+describe("configFileName", () => {
+  test("should use .ts in an ESM project", () => {
+    expect(configFileName("module")).toBe("srcpack.config.ts");
+  });
+
+  test("should use .mts in a CommonJS project", () => {
+    expect(configFileName("commonjs")).toBe("srcpack.config.mts");
+  });
+
+  test("should use .mts when type is absent", () => {
+    // `npm init -y` writes no `type` field at all
+    expect(configFileName(undefined)).toBe("srcpack.config.mts");
+  });
+});
 
 /**
  * The generated file is TypeScript that srcpack itself loads on the next run,

@@ -42,5 +42,17 @@ Config files must use erasable syntax only. Type annotations, `satisfies`, and
 does not compile them. `defineConfig` objects use none of the latter, so the
 `init` template and every documented example are unaffected.
 
+Node also derives a `.ts` file's module format from the nearest package.json
+`type`, so in a CommonJS project the template's `import { defineConfig }` line
+is a syntax error — the bundled TypeScript compiler used to hide this. So
+`srcpack.config.mts` joins `searchPlaces`, and `init` writes it whenever the
+project is not `"type": "module"`. `.mts` is unconditionally ESM and loads
+either way; `.ts` stays the default for ESM projects because it is the name
+the docs use.
+
+The test suite runs on Bun, which loads either extension regardless of package
+type and so cannot see this class of failure. CI installs the packed tarball
+into a CommonJS project and runs the CLI under Node to cover it.
+
 Both EOL runtimes are dropped in one step, so the next floor bump can wait for
 a real forcing function rather than following each dependency's minor releases.

@@ -139,7 +139,8 @@ export function parseConfig(value: unknown): Config {
 
 const explorer = cosmiconfig("srcpack", {
   searchPlaces: [
-    "srcpack.config.ts", // Primary: full TypeScript support with Bun
+    "srcpack.config.ts", // Primary: works in an ESM project ("type": "module")
+    "srcpack.config.mts", // Unconditionally ESM, so it also loads in CommonJS
     "srcpack.config.js", // Fallback for JS-only projects
     "package.json", // Zero-file option via "srcpack" field
   ],

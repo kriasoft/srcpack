@@ -15,9 +15,29 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
+      # The test suite runs on Bun, but users run the published CLI on Node.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
       - run: bun install --frozen-lockfile
       - run: bun run check
       - run: bun prettier --check .
       - run: bun test tests/unit/ tests/e2e/
       - run: bun run build
       - run: bun run docs:build
+
+      # Installs the real tarball and loads a config in a CommonJS project —
+      # the default `npm init` layout, where Node's type stripping treats a
+      # `.ts` config as CommonJS and its `import` line fails to parse.
+      - name: Smoke-test the package on Node
+        run: |
+          set -euo pipefail
+          npm pack --pack-destination "$RUNNER_TEMP"
+          mkdir -p "$RUNNER_TEMP/smoke/src"
+          cd "$RUNNER_TEMP/smoke"
+          npm init -y > /dev/null
+          npm install "$RUNNER_TEMP"/srcpack-*.tgz > /dev/null
+          echo 'export const x = 1;' > src/index.ts
+          printf 'import { defineConfig } from "srcpack";\nexport default defineConfig({ bundles: { app: "src/**/*" } });\n' > srcpack.config.mts
+          ./node_modules/.bin/srcpack --dry-run | tee out.txt
+          grep -q 'src/index.ts' out.txt

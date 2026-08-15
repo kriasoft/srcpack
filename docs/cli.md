@@ -242,7 +242,11 @@ yarn dlx srcpack --no-upload
 Srcpack searches for config in order:
 
 1. `srcpack.config.ts`
-2. `srcpack.config.js`
-3. `srcpack` field in `package.json`
+2. `srcpack.config.mts`
+3. `srcpack.config.js`
+4. `srcpack` field in `package.json`
 
 Searches from current directory up to filesystem root.
+
+`srcpack init` writes `.ts` in an ESM project and `.mts` otherwise — see
+[Configuration](./configuration.md#config-file-format).

@@ -5,21 +5,38 @@ import { appendFile, readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
-const CONFIG_FILE = "srcpack.config.ts";
-
 type Bundle = {
   name: string;
   include: string[];
 };
 
+/**
+ * Node decides a `.ts` file's module format from the nearest package.json
+ * `type`, so the generated config's `import` line is a syntax error in a
+ * CommonJS project. `.mts` is unconditionally ESM and loads in both.
+ */
+export function configFileName(packageType: string | undefined): string {
+  return packageType === "module" ? "srcpack.config.ts" : "srcpack.config.mts";
+}
+
+async function readPackageType(cwd: string): Promise<string | undefined> {
+  try {
+    const pkg = await readFile(join(cwd, "package.json"), "utf-8");
+    return (JSON.parse(pkg) as { type?: string }).type;
+  } catch {
+    return undefined; // No package.json, or unreadable: assume CommonJS
+  }
+}
+
 export async function runInit(): Promise<void> {
   const cwd = process.cwd();
-  const configPath = join(cwd, CONFIG_FILE);
+  const configFile = configFileName(await readPackageType(cwd));
+  const configPath = join(cwd, configFile);
 
-  p.intro("Create srcpack.config.ts");
+  p.intro(`Create ${configFile}`);
 
   if (existsSync(configPath)) {
-    p.log.warn(`${CONFIG_FILE} already exists`);
+    p.log.warn(`${configFile} already exists`);
     const overwrite = await p.confirm({
       message: "Overwrite existing config?",
       initialValue: false,
@@ -75,7 +92,7 @@ export async function runInit(): Promise<void> {
   // Add output directory to .gitignore
   await addToGitignore(cwd, outDirValue);
 
-  p.outro(`Created ${CONFIG_FILE}`);
+  p.outro(`Created ${configFile}`);
 }
 
 async function promptBundle(

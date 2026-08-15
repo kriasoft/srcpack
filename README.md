@@ -17,7 +17,7 @@ LLM context fails when codebases are large, noisy, or poorly organized. Srcpack 
 
 ## Configuration
 
-Create `srcpack.config.ts` in your project root:
+Create `srcpack.config.ts` in your project root (use `srcpack.config.mts` if your `package.json` lacks `"type": "module"` — `srcpack init` picks the right one):
 
 ```typescript
 import { defineConfig } from "srcpack";
