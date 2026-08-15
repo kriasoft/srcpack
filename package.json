@@ -94,5 +94,8 @@
     "typescript": "^6.0.3",
     "vitepress": "^2.0.0-alpha.19",
     "vitepress-plugin-llms": "^1.13.5"
+  },
+  "prettier": {
+    "proseWrap": "never"
   }
 }

@@ -102,16 +102,11 @@ npx srcpack --dirty           # staged + unstaged + untracked
 npx srcpack --since main      # everything you changed since main
 ```
 
-These build a one-off bundle from the current change set and need no config
-file — handy for handing a work-in-progress to an LLM. The bundle is named
-after the flag (`.srcpack/staged.txt`), other bundles in `outDir` are left
-alone, and nothing is written when there are no changes.
+These build a one-off bundle from the current change set and need no config file — handy for handing a work-in-progress to an LLM. The bundle is named after the flag (`.srcpack/staged.txt`), other bundles in `outDir` are left alone, and nothing is written when there are no changes.
 
-Ad-hoc bundles stay local: they are never uploaded, even with Google Drive
-configured. Declare a named bundle to publish changes.
+Ad-hoc bundles stay local: they are never uploaded, even with Google Drive configured. Declare a named bundle to publish changes.
 
-For a permanent version with review instructions attached, put a
-[git source](./configuration.md#git-sources-git-prefix) in your config instead.
+For a permanent version with review instructions attached, put a [git source](./configuration.md#git-sources-git-prefix) in your config instead.
 
 ### `srcpack init`
 
@@ -179,8 +174,7 @@ Opens a browser to authorize access. Tokens are stored in `~/.config/srcpack/cre
 | `-h`, `--help`     | Show help                                      |
 | `-v`, `--version`  | Show version                                   |
 
-An unrecognized option is an error, not a no-op — `--no-uplaod` would otherwise
-upload, and `--dry-rnu` would write.
+An unrecognized option is an error, not a no-op — `--no-uplaod` would otherwise upload, and `--dry-rnu` would write.
 
 ## Examples
 
@@ -219,10 +213,7 @@ Output:
 Dry run: 2 bundles, 4 files, 938 lines
 ```
 
-Each bundle lists the files it would contain, so you can check the shape of a
-pattern before anything is written; `outDir` is left alone too. A bundle that
-declares [`linear`](./configuration.md#linear-issues) still calls the API — the
-counts are what it would produce right now, which it can't know offline.
+Each bundle lists the files it would contain, so you can check the shape of a pattern before anything is written; `outDir` is left alone too. A bundle that declares [`linear`](./configuration.md#linear-issues) still calls the API — the counts are what it would produce right now, which it can't know offline.
 
 ### Bundle without upload
 
@@ -264,5 +255,4 @@ Srcpack searches for config in order:
 
 Searches from current directory up to filesystem root.
 
-`srcpack init` writes `.ts` in an ESM project and `.mts` otherwise — see
-[Configuration](./configuration.md#config-file-format).
+`srcpack init` writes `.ts` in an ESM project and `.mts` otherwise — see [Configuration](./configuration.md#config-file-format).

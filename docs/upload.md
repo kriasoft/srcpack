@@ -38,13 +38,13 @@ export default defineConfig({
 
 **Upload options:**
 
-| Option         | Type       | Description                                      |
-| -------------- | ---------- | ------------------------------------------------ |
-| `provider`     | `"gdrive"` | Upload provider (currently only gdrive)          |
-| `folderId`     | `string`   | Google Drive folder ID (optional, defaults root) |
-| `clientId`     | `string`   | OAuth 2.0 client ID                              |
-| `clientSecret` | `string`   | OAuth 2.0 client secret                          |
-| `exclude`      | `string[]` | Bundle names to skip during upload               |
+| Option | Type | Description |
+| --- | --- | --- |
+| `provider` | `"gdrive"` | Upload provider (currently only gdrive) |
+| `folderId` | `string` | Google Drive folder ID (optional, defaults root) |
+| `clientId` | `string` | OAuth 2.0 client ID |
+| `clientSecret` | `string` | OAuth 2.0 client secret |
+| `exclude` | `string[]` | Bundle names to skip during upload |
 
 **Finding your folder ID:**
 
@@ -110,10 +110,7 @@ upload: {
 }
 ```
 
-This is useful for local-only bundles that shouldn't be shared — a bundle of
-[Linear issues](./configuration.md#linear-issues), say. Names are checked
-against your configured bundles, so a typo fails the run instead of quietly
-uploading what it was meant to hold back.
+This is useful for local-only bundles that shouldn't be shared — a bundle of [Linear issues](./configuration.md#linear-issues), say. Names are checked against your configured bundles, so a typo fails the run instead of quietly uploading what it was meant to hold back.
 
 ### Skip Upload
 
@@ -163,9 +160,7 @@ yarn dlx srcpack web
 
 ## Environment Variables
 
-::: warning
-Never commit `clientId` and `clientSecret` directly in your config file. Use environment variables for shared or public repositories.
-:::
+::: warning Never commit `clientId` and `clientSecret` directly in your config file. Use environment variables for shared or public repositories. :::
 
 For CI/CD or shared configs, use environment variables:
 
@@ -191,14 +186,8 @@ Once uploaded, bundles appear in your Google Drive folder. You can:
 
 ## Troubleshooting
 
-::: details "Access denied" error
-Re-run the login command to refresh authentication.
-:::
+::: details "Access denied" error Re-run the login command to refresh authentication. :::
 
-::: details "Folder not found" error
-Verify the folder ID is correct and you have write access to the folder.
-:::
+::: details "Folder not found" error Verify the folder ID is correct and you have write access to the folder. :::
 
-::: details Tokens expired
-Srcpack automatically refreshes tokens. If issues persist, delete `~/.config/srcpack/credentials.json` and run the login command again.
-:::
+::: details Tokens expired Srcpack automatically refreshes tokens. If issues persist, delete `~/.config/srcpack/credentials.json` and run the login command again. :::

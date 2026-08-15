@@ -42,9 +42,7 @@ Onboard faster by querying the codebase directly:
 - "Where are database migrations defined?"
 - "What's the pattern for adding new API endpoints?"
 
-::: tip
-The indexed output means AI answers include exact file and line references, not vague descriptions.
-:::
+::: tip The indexed output means AI answers include exact file and line references, not vague descriptions. :::
 
 ### Technical Writers
 
@@ -67,9 +65,7 @@ Upload: .srcpack/app.txt
 What areas have the most technical debt? Estimate complexity to add OAuth."
 ```
 
-::: info
-AI gives answers based on real code, not guesses.
-:::
+::: info AI gives answers based on real code, not guesses. :::
 
 ### Cross-Team Knowledge Sharing
 
@@ -82,9 +78,7 @@ Upload: .srcpack/api.txt
 What authentication does it expect? Show example request/response."
 ```
 
-::: tip
-No meetings required. The code explains itself.
-:::
+::: tip No meetings required. The code explains itself. :::
 
 ### Security Reviews
 

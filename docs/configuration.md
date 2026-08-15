@@ -9,21 +9,16 @@ Srcpack looks for configuration in the following order:
 
 ## Config File Format
 
-Node decides a `.ts` file's module format from the nearest `package.json`, so
-in a CommonJS project — the `npm init` default — the `import` line in a
-`.ts` config fails to parse. Use `.mts` there: it is unconditionally ESM and
-loads in both kinds of project.
+Node decides a `.ts` file's module format from the nearest `package.json`, so in a CommonJS project — the `npm init` default — the `import` line in a `.ts` config fails to parse. Use `.mts` there: it is unconditionally ESM and loads in both kinds of project.
 
-`srcpack init` picks the right extension for you. If you are writing the file
-by hand:
+`srcpack init` picks the right extension for you. If you are writing the file by hand:
 
 | Your `package.json`      | Use                  |
 | ------------------------ | -------------------- |
 | `"type": "module"`       | `srcpack.config.ts`  |
 | no `type`, or `commonjs` | `srcpack.config.mts` |
 
-Config files are type-stripped, not compiled, so they must use erasable syntax
-— type annotations and `import type` are fine, `enum` and `namespace` are not.
+Config files are type-stripped, not compiled, so they must use erasable syntax — type annotations and `import type` are fine, `enum` and `namespace` are not.
 
 ## Basic Structure
 
@@ -43,13 +38,13 @@ export default defineConfig({
 
 ## Options
 
-| Option        | Type      | Default         | Description                           |
-| ------------- | --------- | --------------- | ------------------------------------- |
-| `root`        | `string`  | `process.cwd()` | Project root directory                |
-| `outDir`      | `string`  | `.srcpack`      | Output directory (relative to root)   |
-| `emptyOutDir` | `boolean` | `true`\*        | Empty output directory before writing |
-| `bundles`     | `object`  | —               | Named bundles (required)              |
-| `upload`      | `object`  | —               | Upload destination                    |
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `root` | `string` | `process.cwd()` | Project root directory |
+| `outDir` | `string` | `.srcpack` | Output directory (relative to root) |
+| `emptyOutDir` | `boolean` | `true`\* | Empty output directory before writing |
+| `bundles` | `object` | — | Named bundles (required) |
+| `upload` | `object` | — | Upload destination |
 
 \*Only for the default `.srcpack`. Any other `outDir` defaults to `false` and must opt in with `emptyOutDir: true` — srcpack deletes nothing it doesn't own by convention.
 
@@ -82,25 +77,13 @@ export default defineConfig({
 });
 ```
 
-Only the default `.srcpack` is emptied automatically. It is srcpack's directory
-by convention, so clearing it is safe; every other `outDir` is somewhere you
-chose, and `outDir: "src"` would otherwise turn a bundling run into a wipe of
-the sources it was asked to bundle. Set `emptyOutDir: true` to opt in, or clean
-up yourself.
+Only the default `.srcpack` is emptied automatically. It is srcpack's directory by convention, so clearing it is safe; every other `outDir` is somewhere you chose, and `outDir: "src"` would otherwise turn a bundling run into a wipe of the sources it was asked to bundle. Set `emptyOutDir: true` to opt in, or clean up yourself.
 
-Ownership is decided by physical path. A `.srcpack` that turns out to be a
-symlink somewhere else fails the run: the name claims one specific place, and
-both the emptying and the writes would land somewhere it doesn't say. Name that
-directory as `outDir` instead. Pointing `outDir` at the root (`"."`) with
-`emptyOutDir: true` is refused for the same reason — it would delete the
-project.
+Ownership is decided by physical path. A `.srcpack` that turns out to be a symlink somewhere else fails the run: the name claims one specific place, and both the emptying and the writes would land somewhere it doesn't say. Name that directory as `outDir` instead. Pointing `outDir` at the root (`"."`) with `emptyOutDir: true` is refused for the same reason — it would delete the project.
 
-Emptying waits until every bundle has resolved, immediately before the new
-files are written. A run that fails while resolving — an unreadable `.gitignore`, an expired
-`LINEAR_API_KEY` — leaves the previous output intact.
+Emptying waits until every bundle has resolved, immediately before the new files are written. A run that fails while resolving — an unreadable `.gitignore`, an expired `LINEAR_API_KEY` — leaves the previous output intact.
 
-Emptying only happens on a full run. `srcpack web` leaves the bundles it isn't
-building in place, since it has no way to tell which of them are stale.
+Emptying only happens on a full run. `srcpack web` leaves the bundles it isn't building in place, since it has no way to tell which of them are stale.
 
 ## Bundle Definitions
 
@@ -138,21 +121,17 @@ bundles: {
 
 **Bundle options:**
 
-| Option    | Type                 | Default               | Description                               |
-| --------- | -------------------- | --------------------- | ----------------------------------------- |
-| `include` | `string \| string[]` | —                     | Glob pattern(s)                           |
-| `linear`  | `string \| object`   | —                     | Linear issues (see below)                 |
-| `outfile` | `string`             | `{outDir}/{name}.txt` | Custom output path                        |
-| `index`   | `boolean`            | `true`                | Include index header                      |
-| `prompt`  | `string`             | —                     | Text or file path (`./`, `~/`) to prepend |
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `include` | `string \| string[]` | — | Glob pattern(s) |
+| `linear` | `string \| object` | — | Linear issues (see below) |
+| `outfile` | `string` | `{outDir}/{name}.txt` | Custom output path |
+| `index` | `boolean` | `true` | Include index header |
+| `prompt` | `string` | — | Text or file path (`./`, `~/`) to prepend |
 
 A bundle needs at least one source: `include`, `linear`, or both.
 
-Two bundles may not write to the same file. Names that differ only by case, or
-only in Unicode normalisation, count as the same file everywhere: on a
-case-insensitive filesystem — the default on macOS and Windows — `Web.txt` and
-`web.txt` are one directory entry, and APFS treats the two spellings of `Café`
-the same way, so one bundle would silently overwrite the other.
+Two bundles may not write to the same file. Names that differ only by case, or only in Unicode normalisation, count as the same file everywhere: on a case-insensitive filesystem — the default on macOS and Windows — `Web.txt` and `web.txt` are one directory entry, and APFS treats the two spellings of `Café` the same way, so one bundle would silently overwrite the other.
 
 ## Pattern Syntax
 
@@ -263,11 +242,11 @@ bundles: {
 
 **Linear options:**
 
-| Option          | Type      | Default | Description                                            |
-| --------------- | --------- | ------- | ------------------------------------------------------ |
-| `team`          | `string`  | —       | Required. Team key — the `ENG` in `ENG-123`            |
-| `project`       | `string`  | —       | Project name. Must match exactly one project in `team` |
-| `includeClosed` | `boolean` | `false` | Include completed, canceled and duplicate issues       |
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `team` | `string` | — | Required. Team key — the `ENG` in `ENG-123` |
+| `project` | `string` | — | Project name. Must match exactly one project in `team` |
+| `includeClosed` | `boolean` | `false` | Include completed, canceled and duplicate issues |
 
 The string form `linear: "ENG"` is shorthand for `{ team: "ENG" }`.
 
@@ -287,20 +266,12 @@ Notes:
 
 Srcpack skips:
 
-- Files matching `.gitignore` — including `node_modules/`, build output, and
-  secrets, since those are already ignored in any normal project. Nested
-  `.gitignore` files count too, resolved the way git resolves them: the rule in
-  the deepest directory wins, and nothing under an ignored directory is
-  re-included. A monorepo's `packages/app/.gitignore` hides its `.env` here
-  exactly as it does for git.
+- Files matching `.gitignore` — including `node_modules/`, build output, and secrets, since those are already ignored in any normal project. Nested `.gitignore` files count too, resolved the way git resolves them: the rule in the deepest directory wins, and nothing under an ignored directory is re-included. A monorepo's `packages/app/.gitignore` hides its `.env` here exactly as it does for git.
 - Binary files (images, fonts, compiled assets), detected by content
-- Symlinks, so a link can't pull in a file from outside the project — including
-  symlinked directories, which are not walked into
-- Its own output — `outDir` and every configured `outfile`. Otherwise a rerun
-  would bundle the previous run's file, nesting it again each time.
+- Symlinks, so a link can't pull in a file from outside the project — including symlinked directories, which are not walked into
+- Its own output — `outDir` and every configured `outfile`. Otherwise a rerun would bundle the previous run's file, nesting it again each time.
 
-Everything else matched by a pattern is included, so exclude what you don't
-want explicitly: `["src/**/*", "!bun.lock"]`.
+Everything else matched by a pattern is included, so exclude what you don't want explicitly: `["src/**/*", "!bun.lock"]`.
 
 ## Examples
 
@@ -368,8 +339,7 @@ export default defineConfig({
 }
 ```
 
-Every bundle option is plain JSON, Linear included — its API key comes from the
-environment, so nothing here needs `process.env`.
+Every bundle option is plain JSON, Linear included — its API key comes from the environment, so nothing here needs `process.env`.
 
 ## Upload Configuration
 

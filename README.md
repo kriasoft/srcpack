@@ -1,5 +1,7 @@
 # Srcpack
 
+[![npm version](https://img.shields.io/npm/v/srcpack)](https://www.npmjs.com/package/srcpack) [![npm downloads](https://img.shields.io/npm/dm/srcpack)](https://www.npmjs.com/package/srcpack) [![CI](https://img.shields.io/github/actions/workflow/status/kriasoft/srcpack/ci.yml?branch=main&label=CI)](https://github.com/kriasoft/srcpack/actions/workflows/ci.yml) [![license](https://img.shields.io/npm/l/srcpack)](./LICENSE) [![Discord](https://img.shields.io/discord/643523529131950086?label=Discord&logo=discord&logoColor=white)](https://discord.com/invite/aG83xEb6RX)
+
 Zero-config CLI for bundling code into LLM-optimized context files.
 
 **Requirements:** Node.js 22.18+ or Bun
