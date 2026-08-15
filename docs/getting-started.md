@@ -72,7 +72,9 @@ export default defineConfig({
 Run the bundle command and you'll see:
 
 ```
-✓ app  →  .srcpack/app.txt  (12 files, 2.4 KB)
+  app  12 files  240 lines  → .srcpack/app.txt
+
+Bundled: 1 bundle, 12 files, 240 lines
 ```
 
 ## Understanding the Output
@@ -81,16 +83,16 @@ Srcpack generates an indexed bundle optimized for AI consumption:
 
 ```text
 # Index (3 files)
-# [1]   src/index.ts  L1-L42
-# [2]   src/utils.ts  L43-L89
-# [3]   src/api.ts    L90-L150
+# [1]   src/api.ts  L7-L67 (61 lines)
+# [2]   src/index.ts  L69-L110 (42 lines)
+# [3]   src/utils.ts  L112-L158 (47 lines)
 
-#==> [1] src/index.ts <==
-import { utils } from "./utils";
+#==> [1] src/api.ts <==
+export async function fetchBoard() {
 ...
 
-#==> [2] src/utils.ts <==
-export function utils() {
+#==> [2] src/index.ts <==
+import { utils } from "./utils";
 ...
 ```
 
@@ -174,8 +176,25 @@ export default defineConfig({
 });
 ```
 
-See [Git sources](./configuration.md#git-sources-git-prefix) for `git:dirty`,
-`git:main`, and the rest.
+See [Git sources](./configuration.md#git-sources-git-prefix) for `git:dirty`, `git:main`, and the rest.
+
+### Code and Tickets Together
+
+A bundle can include [Linear](https://linear.app) issues next to your code, so the LLM sees both the intent and the implementation:
+
+```ts
+export default defineConfig({
+  bundles: {
+    planning: {
+      include: ["src/**/*.ts", "docs/**/*.md"],
+      linear: { team: "ENG", project: "Roadmap" },
+      prompt: "Which roadmap items are already implemented?",
+    },
+  },
+});
+```
+
+Each issue becomes its own indexed entry (`linear/issues/ENG-123.md`). Set `LINEAR_API_KEY` in your environment first — see [Linear issues](./configuration.md#linear-issues).
 
 ## CLI Reference
 

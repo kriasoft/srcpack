@@ -1,6 +1,6 @@
 {
   "name": "srcpack",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Zero-config CLI for bundling code into LLM-optimized context files",
   "keywords": [
     "llm",
@@ -94,5 +94,8 @@
     "typescript": "^6.0.3",
     "vitepress": "^2.0.0-alpha.19",
     "vitepress-plugin-llms": "^1.13.5"
+  },
+  "prettier": {
+    "proseWrap": "never"
   }
 }

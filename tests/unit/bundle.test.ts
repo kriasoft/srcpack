@@ -1,12 +1,19 @@
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, test } from "bun:test";
 import {
   bundleOne,
   createBundle,
   formatIndex,
   resolvePatterns,
-  type FileEntry,
+  type Entry,
+  type IndexEntry,
 } from "../../src/bundle.ts";
+
+/** createBundle takes entries; these tests only exercise on-disk files. */
+const entries = (...paths: string[]): Entry[] =>
+  paths.map((path) => ({ path }));
 
 const fixturesDir = join(import.meta.dir, "../fixtures/sample-project");
 const gitignoreFixturesDir = join(
@@ -218,7 +225,7 @@ describe("resolvePatterns", () => {
       join(gitignoreFixturesDir, "src/index.ts"),
       fixturesDir,
     );
-    const result = await createBundle(files, fixturesDir);
+    const result = await createBundle(entries(...files), fixturesDir);
 
     expect(result.index).toHaveLength(1);
     expect(result.index[0]!.lines).toBeGreaterThan(0);
@@ -261,6 +268,77 @@ describe("resolvePatterns", () => {
   });
 });
 
+/**
+ * The two boundaries a bundle must not cross: what .gitignore hides, and the
+ * project itself. Both are documented guarantees, so both are tested against a
+ * layout built here rather than a fixture — a symlink pointing out of the repo
+ * doesn't survive packaging.
+ */
+describe("resolvePatterns boundaries", () => {
+  let project: string;
+  let outside: string;
+
+  beforeEach(async () => {
+    project = await mkdtemp(join(tmpdir(), "srcpack-project-"));
+    outside = await mkdtemp(join(tmpdir(), "srcpack-outside-"));
+  });
+
+  afterEach(async () => {
+    await rm(project, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  });
+
+  test("should apply a nested .gitignore the way git does", async () => {
+    await mkdir(join(project, "packages/app"), { recursive: true });
+    await writeFile(join(project, ".gitignore"), "node_modules/\n");
+    await writeFile(
+      join(project, "packages/app/.gitignore"),
+      ".env\n!keep.env\n",
+    );
+    await writeFile(
+      join(project, "packages/app/.env"),
+      "DB_PASSWORD=hunter2\n",
+    );
+    await writeFile(join(project, "packages/app/keep.env"), "PUBLIC=1\n");
+    await writeFile(join(project, "packages/app/index.ts"), "export {};\n");
+
+    const files = await resolvePatterns("**/*", project);
+
+    // Reading only the root .gitignore bundles every secret a monorepo hides
+    // one directory down — the case that motivates layered resolution
+    expect(files).not.toContain("packages/app/.env");
+    // A negation in the same file re-includes, as it does for git
+    expect(files).toContain("packages/app/keep.env");
+    expect(files).toContain("packages/app/index.ts");
+  });
+
+  test("should not re-include what an ignored parent directory hides", async () => {
+    await mkdir(join(project, "hidden"), { recursive: true });
+    await writeFile(join(project, ".gitignore"), "hidden/\n");
+    await writeFile(join(project, "hidden/.gitignore"), "!secret.txt\n");
+    await writeFile(join(project, "hidden/secret.txt"), "SECRET\n");
+
+    const files = await resolvePatterns("**/*", project);
+
+    // Git never descends into an ignored directory, so the negation can't apply
+    expect(files).not.toContain("hidden/secret.txt");
+  });
+
+  test("should not walk into a symlinked directory", async () => {
+    await mkdir(join(outside, "private"), { recursive: true });
+    await writeFile(join(outside, "private/secret.txt"), "SECRET\n");
+    await writeFile(join(project, "own.ts"), "export {};\n");
+    await symlink(outside, join(project, "vendor"));
+
+    const files = await resolvePatterns("**/*", project);
+
+    // The leaf here is an ordinary file — the escape happened at `vendor`,
+    // which is why checking only the final component cannot catch it
+    expect(files).not.toContain("vendor/private/secret.txt");
+    expect(files).toEqual(["own.ts"]);
+  });
+});
+
 describe("formatIndex", () => {
   test("should format empty index", () => {
     const result = formatIndex([]);
@@ -269,7 +347,7 @@ describe("formatIndex", () => {
   });
 
   test("should format single entry", () => {
-    const index: FileEntry[] = [
+    const index: IndexEntry[] = [
       { path: "src/index.ts", lines: 25, startLine: 1, endLine: 25 },
     ];
     const result = formatIndex(index);
@@ -280,7 +358,7 @@ describe("formatIndex", () => {
   });
 
   test("should format multiple entries", () => {
-    const index: FileEntry[] = [
+    const index: IndexEntry[] = [
       { path: "src/index.ts", lines: 25, startLine: 1, endLine: 25 },
       { path: "src/utils.ts", lines: 100, startLine: 26, endLine: 125 },
     ];
@@ -294,7 +372,7 @@ describe("formatIndex", () => {
 
 describe("createBundle", () => {
   test("should create bundle with correct content", async () => {
-    const result = await createBundle(["src/index.ts"], fixturesDir);
+    const result = await createBundle(entries("src/index.ts"), fixturesDir);
 
     expect(result.content).toContain("# Index");
     expect(result.content).toContain("#==> [1] src/index.ts <==");
@@ -304,7 +382,7 @@ describe("createBundle", () => {
   });
 
   test("should compute correct line counts", async () => {
-    const result = await createBundle(["src/index.ts"], fixturesDir);
+    const result = await createBundle(entries("src/index.ts"), fixturesDir);
 
     expect(result.index).toHaveLength(1);
     expect(result.index[0]!.path).toBe("src/index.ts");
@@ -313,7 +391,7 @@ describe("createBundle", () => {
 
   test("should handle multiple files with correct line ranges", async () => {
     const result = await createBundle(
-      ["src/index.ts", "src/utils/helpers.ts"],
+      entries("src/index.ts", "src/utils/helpers.ts"),
       fixturesDir,
     );
 
@@ -326,6 +404,28 @@ describe("createBundle", () => {
     expect(second!.startLine).toBeGreaterThan(first!.endLine);
   });
 
+  test("should point the index at real content for virtual entries", async () => {
+    const result = await createBundle(
+      [
+        { path: "src/index.ts" },
+        { path: "linear/issues/ENG-1.md", content: "# ENG-1\n\nBody.\n" },
+      ],
+      fixturesDir,
+    );
+
+    // The whole point of the index is that a cited line range is readable
+    const lines = result.content.split("\n");
+    const issue = result.index[1]!;
+    expect(lines.slice(issue.startLine - 1, issue.endLine)).toEqual([
+      "# ENG-1",
+      "",
+      "Body.",
+    ]);
+    expect(lines[issue.startLine - 2]).toBe(
+      "#==> [2] linear/issues/ENG-1.md <==",
+    );
+  });
+
   test("should handle empty file list", async () => {
     const result = await createBundle([], fixturesDir);
 
@@ -334,7 +434,7 @@ describe("createBundle", () => {
   });
 
   test("should preserve file content exactly", async () => {
-    const result = await createBundle(["src/index.ts"], fixturesDir);
+    const result = await createBundle(entries("src/index.ts"), fixturesDir);
     const content = await Bun.file(join(fixturesDir, "src/index.ts")).text();
 
     // Bundle should contain the file content (without trailing newline)
@@ -342,7 +442,10 @@ describe("createBundle", () => {
   });
 
   test("should handle files with multiple lines", async () => {
-    const result = await createBundle(["src/utils/helpers.ts"], fixturesDir);
+    const result = await createBundle(
+      entries("src/utils/helpers.ts"),
+      fixturesDir,
+    );
 
     expect(result.index[0]!.lines).toBeGreaterThan(1);
     expect(result.index[0]!.endLine).toBeGreaterThan(
@@ -351,7 +454,7 @@ describe("createBundle", () => {
   });
 
   test("should omit index header when includeIndex is false", async () => {
-    const result = await createBundle(["src/index.ts"], fixturesDir, {
+    const result = await createBundle(entries("src/index.ts"), fixturesDir, {
       includeIndex: false,
     });
 
@@ -363,7 +466,7 @@ describe("createBundle", () => {
   });
 
   test("should not adjust line numbers when index is omitted", async () => {
-    const result = await createBundle(["src/index.ts"], fixturesDir, {
+    const result = await createBundle(entries("src/index.ts"), fixturesDir, {
       includeIndex: false,
     });
 
@@ -381,7 +484,7 @@ describe("createBundle", () => {
 
   test("should handle multiple files without index", async () => {
     const result = await createBundle(
-      ["src/index.ts", "src/utils/helpers.ts"],
+      entries("src/index.ts", "src/utils/helpers.ts"),
       fixturesDir,
       { includeIndex: false },
     );
@@ -394,7 +497,7 @@ describe("createBundle", () => {
   });
 
   test("should prepend prompt with separator", async () => {
-    const result = await createBundle(["src/index.ts"], fixturesDir, {
+    const result = await createBundle(entries("src/index.ts"), fixturesDir, {
       prompt: "Review this code for security issues.",
     });
 
@@ -404,7 +507,7 @@ describe("createBundle", () => {
   });
 
   test("should adjust line numbers for prompt offset", async () => {
-    const result = await createBundle(["src/index.ts"], fixturesDir, {
+    const result = await createBundle(entries("src/index.ts"), fixturesDir, {
       prompt: "Review this code.",
     });
 
@@ -416,7 +519,7 @@ describe("createBundle", () => {
   });
 
   test("should handle multi-line prompt", async () => {
-    const result = await createBundle(["src/index.ts"], fixturesDir, {
+    const result = await createBundle(entries("src/index.ts"), fixturesDir, {
       prompt: "Review this code.\nFocus on:\n- Security\n- Performance",
     });
 
@@ -428,7 +531,7 @@ describe("createBundle", () => {
   });
 
   test("should prepend prompt without index", async () => {
-    const result = await createBundle(["src/index.ts"], fixturesDir, {
+    const result = await createBundle(entries("src/index.ts"), fixturesDir, {
       prompt: "Review this code.",
       includeIndex: false,
     });
@@ -443,7 +546,7 @@ describe("createBundle", () => {
   });
 
   test("should ignore empty prompt", async () => {
-    const result = await createBundle(["src/index.ts"], fixturesDir, {
+    const result = await createBundle(entries("src/index.ts"), fixturesDir, {
       prompt: "",
     });
 
@@ -452,7 +555,7 @@ describe("createBundle", () => {
   });
 
   test("should ignore whitespace-only prompt", async () => {
-    const result = await createBundle(["src/index.ts"], fixturesDir, {
+    const result = await createBundle(entries("src/index.ts"), fixturesDir, {
       prompt: "   \n  \n  ",
     });
 

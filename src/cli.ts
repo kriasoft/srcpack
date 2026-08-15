@@ -1,10 +1,26 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: MIT
 
-import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import {
+  mkdir,
+  readdir,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep,
+} from "node:path";
 import ora from "ora";
-import { bundleOne, type BundleResult } from "./bundle.ts";
+import { bundleOne, pathKey, type BundleResult } from "./bundle.ts";
 import {
   ConfigError,
   loadConfig,
@@ -12,7 +28,6 @@ import {
   type BundleConfig,
   type UploadConfig,
 } from "./config.ts";
-import { GitError } from "./git.ts";
 import {
   ensureAuthenticated,
   login,
@@ -20,7 +35,9 @@ import {
   uploadFile,
   type UploadResult,
 } from "./gdrive.ts";
+import { GitError } from "./git.ts";
 import { runInit } from "./init.ts";
+import { LinearError } from "./linear.ts";
 
 interface BundleOutput {
   name: string;
@@ -40,10 +57,65 @@ function plural(n: number, singular: string, pluralForm?: string): string {
   return n === 1 ? singular : (pluralForm ?? singular + "s");
 }
 
+/** The directory srcpack owns by convention, and the only one it clears unasked. */
+const DEFAULT_OUT_DIR = ".srcpack";
+
+/**
+ * Where a path physically is, with symlinks resolved. Destructive decisions are
+ * made on this rather than the lexical path: `.srcpack -> ../shared` is inside
+ * the project by name and somewhere else in fact, and it is the somewhere else
+ * whose contents `rm` would take.
+ *
+ * Resolves as much of the path as exists, however deep that is. Stopping at the
+ * immediate parent would call `.srcpack/nested/x.txt` and `alias/nested/x.txt`
+ * different files until `mkdir -p` runs, which is one step too late to still be
+ * a check: aliasing is a property of the ancestors, not of when they were made.
+ */
+async function physicalPath(path: string): Promise<string> {
+  try {
+    return await realpath(path);
+  } catch {
+    const parent = dirname(path);
+    // dirname("/") === "/": nothing above the filesystem root left to resolve
+    if (parent === path) return path;
+    return join(await physicalPath(parent), basename(path));
+  }
+}
+
+/**
+ * Where `rename` puts a directory entry: ancestors resolved, the entry itself
+ * left alone. Writing replaces the entry instead of following it, so a bundle
+ * whose output is a symlink is identified as the link rather than its target —
+ * two bundles writing over one link's target are still two separate files.
+ */
+async function entryPath(path: string): Promise<string> {
+  return join(await physicalPath(dirname(path)), basename(path));
+}
+
 function isInside(path: string, dir: string): boolean {
   const rel = relative(dir, path);
   // Compare against ".." as a whole segment — "..cache/x" is a child, not an escape
   return rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+}
+
+/**
+ * Write a bundle by replacing the directory entry rather than the file behind
+ * it. Writing in place follows a symlink sitting at the output path, so
+ * `.srcpack/web.txt -> ~/.ssh/config` would be written through; rename replaces
+ * the link itself. It also makes each file appear whole or not at all.
+ *
+ * The temp name carries the pid so two runs can't rename each other's file.
+ */
+async function writeBundle(path: string, content: string): Promise<void> {
+  const temp = `${path}.${process.pid}.tmp`;
+  try {
+    await writeFile(temp, content);
+    await rename(temp, path);
+  } finally {
+    // A failed write or rename would otherwise leave a partial file behind:
+    // stale inside outDir, and bundled by the next run beside a custom outfile.
+    await rm(temp, { force: true });
+  }
 }
 
 /**
@@ -54,8 +126,14 @@ async function emptyDirectory(dir: string, skip: string[] = []): Promise<void> {
   let entries: string[];
   try {
     entries = await readdir(dir);
-  } catch {
-    return; // Directory doesn't exist, nothing to empty
+  } catch (error) {
+    // Only a missing directory is "nothing to empty". Anything else — a
+    // permission error, a file where a directory belongs — would otherwise be
+    // reported as a clean run that then writes into a directory it never read.
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw new ConfigError(
+      `Cannot empty outDir "${dir}": ${(error as Error).message}`,
+    );
   }
   const skipSet = new Set(skip);
   await Promise.all(
@@ -75,6 +153,39 @@ interface AdHocBundle {
 }
 
 const AD_HOC_FLAGS = ["--staged", "--dirty", "--since"] as const;
+
+/**
+ * Every option the CLI accepts. Anything else is a typo, and a typo that gets
+ * quietly dropped is the dangerous kind: `--no-uplaod` uploads, `--dry-rnu`
+ * writes, `--no-emptyOutdir` empties. Same rule as the config — a token that
+ * changes what a run destroys or publishes is never a silent no-op.
+ */
+const KNOWN_FLAGS = new Set([
+  ...AD_HOC_FLAGS,
+  "--dry-run",
+  "--emptyOutDir",
+  "--no-emptyOutDir",
+  "--no-upload",
+  "--help",
+  "-h",
+  "--version",
+  "-v",
+]);
+
+function assertKnownFlags(args: string[]): void {
+  const unknown = args.find(
+    (arg) => arg.startsWith("-") && !KNOWN_FLAGS.has(arg),
+  );
+  if (unknown) {
+    console.error(`Unknown option: ${unknown}`);
+    console.error("Run `srcpack --help` to see the available options.");
+    process.exit(1);
+  }
+  if (args.includes("--emptyOutDir") && args.includes("--no-emptyOutDir")) {
+    console.error("Cannot combine --emptyOutDir with --no-emptyOutDir.");
+    process.exit(1);
+  }
+}
 
 function parseAdHocBundle(args: string[]): AdHocBundle | null {
   const flags = AD_HOC_FLAGS.filter((flag) => args.includes(flag));
@@ -147,7 +258,7 @@ Options:
   --dirty          Bundle staged, unstaged, and untracked changes
   --since <rev>    Bundle changes since <rev> (e.g. --since main)
   --dry-run        Preview bundles without writing files
-  --emptyOutDir    Empty output directory before bundling
+  --emptyOutDir    Empty output directory before writing
   --no-emptyOutDir Keep existing files in output directory
   --no-upload      Skip uploading to cloud storage
   -h, --help       Show this help message
@@ -158,15 +269,18 @@ Options:
 
   // Only in first position: elsewhere the word is a bundle name or a revision,
   // and `--since init` must diff against the `init` branch, not run the wizard.
-  if (args[0] === "init") {
-    await runInit();
+  if (args[0] === "init" || args[0] === "login") {
+    // Neither takes arguments, so anything after is a misunderstanding worth
+    // saying out loud rather than a flag that silently does nothing.
+    if (args.length > 1) {
+      console.error(`srcpack ${args[0]} takes no arguments.`);
+      process.exit(1);
+    }
+    await (args[0] === "init" ? runInit() : runLogin());
     return;
   }
 
-  if (args[0] === "login") {
-    await runLogin();
-    return;
-  }
+  assertKnownFlags(args);
 
   const dryRun = args.includes("--dry-run");
   const noUpload = args.includes("--no-upload");
@@ -210,7 +324,8 @@ Options:
 
   // Validate requested bundle names exist
   for (const name of bundleNames) {
-    if (!(name in bundles)) {
+    // hasOwn, not `in`: `srcpack toString` would otherwise find Object.prototype
+    if (!Object.hasOwn(bundles, name)) {
       console.error(`Unknown bundle: ${name}`);
       process.exit(1);
     }
@@ -223,30 +338,43 @@ Options:
 
   const root = config.root;
 
-  // Resolve emptyOutDir: CLI flag > config > auto (true if inside root).
-  // Ad-hoc runs never empty by default — they shouldn't delete configured bundles.
+  // Resolve emptyOutDir: CLI flag > config > auto.
+  //
+  // Auto means only the conventional `.srcpack`: recursive deletion needs a
+  // directory srcpack demonstrably owns, and `outDir: "src"` reads as an
+  // ordinary setting while turning a bundling run into a source-tree wipe.
+  // Every other directory belongs to the user until they say otherwise.
+  //
+  // The comparison is physical, not lexical: `.srcpack -> ../shared` looks
+  // inside the project and deletes somewhere else. Ad-hoc runs never empty by
+  // default either — they shouldn't delete configured bundles.
+  // Lexical is what gets written to and excluded from bundles; physical is what
+  // decides ownership. Conflating them is what let a symlink redirect a delete.
+  const rootPath = await physicalPath(root);
   const outDirPath = resolve(root, config.outDir);
-  const outDirInsideRoot = isInside(outDirPath, root);
-  const emptyOutDir =
-    emptyOutDirFlag ??
-    (adHoc ? false : (config.emptyOutDir ?? outDirInsideRoot));
+  const outDirPhysical = await physicalPath(outDirPath);
+  const defaultOutDir = join(rootPath, DEFAULT_OUT_DIR);
 
-  // Warn if outDir is outside root and emptyOutDir is not explicitly set
+  // The conventional name is a claim about a place. A `.srcpack` that resolves
+  // somewhere else keeps the name while writing into a directory srcpack was
+  // never given — and would overwrite whatever shares a filename there.
   if (
-    !adHoc &&
-    !outDirInsideRoot &&
-    emptyOutDirFlag === undefined &&
-    config.emptyOutDir === undefined
+    resolve(root, DEFAULT_OUT_DIR) === outDirPath &&
+    outDirPhysical !== defaultOutDir
   ) {
-    console.warn(
-      `Warning: outDir "${config.outDir}" is outside project root. ` +
-        "Use --emptyOutDir to suppress this warning and empty the directory.",
+    throw new ConfigError(
+      `Refusing to use "${DEFAULT_OUT_DIR}": it resolves to "${outDirPhysical}", not "${defaultOutDir}". ` +
+        "Set outDir to that path explicitly if that is where bundles belong.",
     );
   }
 
+  const ownsOutDir = outDirPhysical === defaultOutDir;
+  const emptyOutDir =
+    emptyOutDirFlag ?? (adHoc ? false : (config.emptyOutDir ?? ownsOutDir));
+
   // `outDir: "."` resolves to the project root, where emptying deletes the
   // whole project — sources, config and all. Refuse rather than warn.
-  const outDirHoldsRoot = isInside(root, outDirPath);
+  const outDirHoldsRoot = isInside(rootPath, outDirPhysical);
   if (emptyOutDir && outDirHoldsRoot) {
     throw new ConfigError(
       `Refusing to empty outDir "${config.outDir}": it contains the project root. ` +
@@ -254,20 +382,43 @@ Options:
     );
   }
 
-  // Empty outDir before bundling (unless dry-run). Only for a full run: a named
-  // subset can't tell what is stale, so `srcpack web` must not delete api.txt.
-  if (emptyOutDir && !dryRun && requestedBundles.length === 0) {
-    await emptyDirectory(outDirPath, [".git"]);
-  }
-
   // srcpack never bundles what srcpack writes. Every configured outfile is
   // named explicitly; outDir covers stale bundles from renamed config entries
   // too, but not when it holds the root — that would exclude the whole project.
-  const ownOutputs = Object.entries(config.bundles).map(
-    ([name, bundleConfig]) =>
-      resolve(root, getOutfile(bundleConfig, name, config.outDir)),
-  );
-  if (!outDirHoldsRoot) ownOutputs.push(outDirPath);
+  //
+  // Both spellings of every output are recorded. A glob rooted at a symlink
+  // yields lexical paths, one rooted at the real directory yields physical
+  // ones, and either can name a file the previous run wrote.
+  const ownOutputs = new Set<string>();
+  const writers = new Map<string, string>();
+  for (const [name, bundleConfig] of Object.entries(config.bundles)) {
+    const outfile = resolve(
+      root,
+      getOutfile(bundleConfig, name, config.outDir),
+    );
+    // Two bundles sharing one file is silent loss: the second write replaces the
+    // first, and the upload step then sends the survivor twice under two names.
+    // Keyed by destination entry — `.srcpack/a.txt` and `alias/a.txt` are two
+    // spellings of one file as soon as `alias` links to `.srcpack`, and so are
+    // `Web.txt` and `web.txt` wherever the filesystem folds case.
+    const entry = await entryPath(outfile);
+    const key = pathKey(entry);
+    const first = writers.get(key);
+    if (first) {
+      throw new ConfigError(
+        `Bundles "${first}" and "${name}" both write to "${relative(root, outfile) || outfile}". ` +
+          "Give one of them its own outfile.",
+      );
+    }
+    writers.set(key, name);
+    ownOutputs.add(outfile);
+    ownOutputs.add(entry);
+  }
+  if (!outDirHoldsRoot) {
+    ownOutputs.add(outDirPath);
+    ownOutputs.add(outDirPhysical);
+  }
+  const outputPaths = [...ownOutputs];
 
   const outputs: BundleOutput[] = [];
 
@@ -282,12 +433,37 @@ Options:
       const name = bundleNames[i]!;
       bundleSpinner.text = `Bundling ${name}... (${i + 1}/${bundleNames.length})`;
       const bundleConfig = bundles[name]!;
-      const result = await bundleOne(bundleConfig, root, ownOutputs);
+      let result: BundleResult;
+      try {
+        result = await bundleOne(bundleConfig, root, outputPaths);
+      } catch (error) {
+        // A config can declare many bundles; the underlying message says what
+        // broke but not which bundle asked for it.
+        if (
+          error instanceof ConfigError ||
+          error instanceof GitError ||
+          error instanceof LinearError
+        ) {
+          error.message = `Bundle "${name}": ${error.message}`;
+        }
+        throw error;
+      }
       const outfile = getOutfile(bundleConfig, name, config.outDir);
       outputs.push({ name, outfile, result });
     }
   } finally {
     bundleSpinner.stop();
+  }
+
+  // Empty outDir only once every bundle has resolved, and only for a full run:
+  // a named subset can't tell what is stale, so `srcpack web` must not delete
+  // api.txt. Emptying earlier would destroy a good previous run whenever a
+  // later bundle fails — routine once a source is remote, since an expired
+  // token or a rate limit aborts the run after outDir is already gone.
+  // Resolution doesn't need the files removed first: `ownOutputs` already keeps
+  // srcpack's own output from being bundled.
+  if (emptyOutDir && !dryRun && requestedBundles.length === 0) {
+    await emptyDirectory(outDirPath, [".git"]);
   }
 
   // Calculate column widths for aligned output
@@ -328,7 +504,7 @@ Options:
       );
     } else {
       await mkdir(dirname(outPath), { recursive: true });
-      await writeFile(outPath, result.content);
+      await writeBundle(outPath, result.content);
       const displayPath = relative(process.cwd(), outPath);
       console.log(
         `  ${nameCol}  ${filesCol} ${plural(fileCount, "file")}  ${linesCol} ${plural(lineCount, "line")}  → ${displayPath}`,
@@ -376,16 +552,6 @@ function isGdriveConfigured(config: UploadConfig): boolean {
     Boolean(config.clientId) &&
     Boolean(config.clientSecret)
   );
-}
-
-function getGdriveConfig(config: {
-  upload?: UploadConfig | UploadConfig[];
-}): UploadConfig | null {
-  if (!config.upload) return null;
-  const uploads = Array.isArray(config.upload)
-    ? config.upload
-    : [config.upload];
-  return uploads.find(isGdriveConfigured) ?? null;
 }
 
 async function runLogin(): Promise<void> {
@@ -531,9 +697,13 @@ function getOutfile(
 }
 
 main().catch((err) => {
-  // Config and git failures are user-facing; a stack trace only adds noise
+  // Config, git and Linear failures are user-facing; a stack trace adds noise
   console.error(
-    err instanceof ConfigError || err instanceof GitError ? err.message : err,
+    err instanceof ConfigError ||
+      err instanceof GitError ||
+      err instanceof LinearError
+      ? err.message
+      : err,
   );
   process.exit(1);
 });

@@ -1,6 +1,6 @@
+import { describe, expect, expectTypeOf, test } from "bun:test";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, expectTypeOf, test } from "bun:test";
 import {
   type BundleConfig,
   type BundleConfigInput,
@@ -227,7 +227,11 @@ describe("parseConfig", () => {
 
     test("should accept upload.exclude as array of bundle names", () => {
       const config = parseConfig({
-        bundles: { web: "src/**/*", local: "local/**/*" },
+        bundles: {
+          web: "src/**/*",
+          local: "local/**/*",
+          debug: "debug/**/*",
+        },
         upload: {
           provider: "gdrive",
           clientId: "id",
@@ -240,6 +244,33 @@ describe("parseConfig", () => {
         "local",
         "debug",
       ]);
+    });
+
+    test("should reject an upload.exclude name that is not a bundle", () => {
+      // A name that matches nothing uploads the bundle it was meant to hold
+      // back — for a bundle of Linear issues, off the machine entirely
+      const gdrive = {
+        provider: "gdrive",
+        clientId: "id",
+        clientSecret: "secret",
+      };
+
+      expect(() =>
+        parseConfig({
+          bundles: { planning: { linear: "ENG" } },
+          upload: { ...gdrive, exclude: ["planing"] },
+        }),
+      ).toThrow('upload.exclude: Unknown bundle "planing"');
+
+      expect(() =>
+        parseConfig({
+          bundles: { planning: { linear: "ENG" } },
+          upload: [
+            { ...gdrive, exclude: ["planning"] },
+            { ...gdrive, exclude: ["planing"] },
+          ],
+        }),
+      ).toThrow('upload.1.exclude: Unknown bundle "planing"');
     });
 
     test("should leave upload.exclude undefined when not provided", () => {
@@ -334,10 +365,153 @@ describe("parseConfig", () => {
       }
     });
 
+    test("should reject a bundle name that is not a filename", () => {
+      // The default output is `<outDir>/<name>.txt`, so "../report" writes
+      // outside outDir and "-x" names a bundle the CLI can never be given
+      for (const name of ["../report", "-x", "a/b", "."]) {
+        expect(() => parseConfig({ bundles: { [name]: "src/**/*" } })).toThrow(
+          "Bundle name must start with a letter or digit",
+        );
+      }
+
+      expect(() =>
+        parseConfig({ bundles: { "web.v2_final-1": "src/**/*" } }),
+      ).not.toThrow();
+    });
+
+    test("should reject unknown keys rather than strip them", () => {
+      // A stripped key changes behaviour without saying so: `liner` drops the
+      // bundle's issues, `emptyOutdir` leaves the automatic default in charge,
+      // and `exlude` uploads a bundle that was meant to stay local
+      const cases: [unknown, string][] = [
+        [
+          { bundles: { web: { include: "src/**", liner: "ENG" } } },
+          'bundles.web: Unrecognized key: "liner"',
+        ],
+        [
+          { bundles: { web: { include: "src/**", oufile: "web.txt" } } },
+          'bundles.web: Unrecognized key: "oufile"',
+        ],
+        [
+          { bundles: {}, emptyOutdir: false },
+          'Unrecognized key: "emptyOutdir"',
+        ],
+        [
+          {
+            bundles: {},
+            upload: {
+              provider: "gdrive",
+              clientId: "id",
+              clientSecret: "secret",
+              exlude: ["web"],
+            },
+          },
+          'upload: Unrecognized key: "exlude"',
+        ],
+      ];
+
+      for (const [config, message] of cases) {
+        expect(() => parseConfig(config)).toThrow(message);
+      }
+    });
+
     test("should allow empty bundles object", () => {
       const config = parseConfig({ bundles: {} });
 
       expect(config.bundles).toEqual({});
+    });
+  });
+
+  describe("linear source", () => {
+    test("should accept the team shorthand", () => {
+      const config = parseConfig({ bundles: { backlog: { linear: "ENG" } } });
+
+      expect(config.bundles.backlog).toEqual({ linear: "ENG", index: true });
+    });
+
+    test("should default includeClosed to false", () => {
+      const config = parseConfig({
+        bundles: { backlog: { linear: { team: "ENG" } } },
+      });
+
+      expect(config.bundles.backlog).toMatchObject({
+        linear: { team: "ENG", includeClosed: false },
+      });
+    });
+
+    test("should accept files and issues together", () => {
+      const config = parseConfig({
+        bundles: {
+          planning: {
+            include: ["docs/**"],
+            linear: { team: "ENG", project: "Roadmap" },
+          },
+        },
+      });
+
+      expect(config.bundles.planning).toMatchObject({
+        include: ["docs/**"],
+        linear: { team: "ENG", project: "Roadmap", includeClosed: false },
+      });
+    });
+
+    test("should trim team and project", () => {
+      // A key pasted with a stray space would otherwise fail remotely as
+      // "not found", which reads like the wrong key rather than the wrong space
+      const config = parseConfig({
+        bundles: {
+          backlog: { linear: "  ENG  " },
+          roadmap: { linear: { team: " ENG ", project: " Roadmap " } },
+        },
+      });
+
+      expect(config.bundles.backlog).toMatchObject({ linear: "ENG" });
+      expect(config.bundles.roadmap).toMatchObject({
+        linear: { team: "ENG", project: "Roadmap" },
+      });
+    });
+
+    test("should require a team", () => {
+      expect(() =>
+        parseConfig({
+          bundles: { backlog: { linear: { project: "Roadmap" } } },
+        }),
+      ).toThrow(ConfigError);
+    });
+
+    test("should reject an unknown key instead of silently widening", () => {
+      // Stripping `projet` would quietly fetch the whole team — the exact
+      // silent widening the required team and ambiguity checks guard against
+      try {
+        parseConfig({
+          bundles: { backlog: { linear: { team: "ENG", projet: "Roadmap" } } },
+        });
+        expect.unreachable("should have thrown");
+      } catch (e) {
+        expect((e as ConfigError).message).toBe(
+          'bundles.backlog.linear: Unrecognized key: "projet"',
+        );
+      }
+    });
+
+    test("should name the offending path for a missing team", () => {
+      try {
+        parseConfig({ bundles: { backlog: { linear: { project: "R" } } } });
+        expect.unreachable("should have thrown");
+      } catch (e) {
+        expect((e as ConfigError).message).toContain(
+          "bundles.backlog.linear.team",
+        );
+      }
+    });
+
+    test("should reject a bundle with no source at all", () => {
+      try {
+        parseConfig({ bundles: { web: { outfile: "web.txt" } } });
+        expect.unreachable("should have thrown");
+      } catch (e) {
+        expect((e as ConfigError).message).toContain("Bundle needs a source");
+      }
     });
   });
 });
