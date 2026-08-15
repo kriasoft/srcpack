@@ -22,6 +22,15 @@ const PatternsSchema = z.union([
  * Bundle configuration. Accepts a string pattern, array of patterns, or object.
  * Patterns prefixed with `!` are exclusions. Patterns prefixed with `+` force
  * inclusion (bypass .gitignore).
+ *
+ * A pattern may also be a git source instead of a glob: `git:staged`,
+ * `git:unstaged`, `git:untracked`, `git:dirty`, or `git:<rev>` (e.g.
+ * `git:main`, `git:HEAD~3`).
+ *
+ * @example
+ * ```ts
+ * bundles: { review: ["git:staged", "!bun.lock"] }
+ * ```
  */
 const BundleConfigSchema = z.union([
   z.string().min(1),

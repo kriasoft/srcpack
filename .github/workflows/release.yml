@@ -12,12 +12,13 @@ jobs:
       id-token: write
       contents: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
+          # Stay on LTS for the publish job; v26 becomes LTS 2026-10-28.
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
       - run: bun install --frozen-lockfile

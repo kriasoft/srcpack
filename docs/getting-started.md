@@ -4,7 +4,7 @@ Bundle your codebase into LLM-optimized context files. Get precise, grounded ans
 
 ## Prerequisites
 
-- Node.js 20+ or Bun
+- Node.js 22.18+ or Bun
 - A codebase you want to share with AI
 
 ## Quick Start
@@ -159,6 +159,24 @@ export default defineConfig({
 });
 ```
 
+### Review Bundle
+
+Bundle what you changed instead of a fixed set of paths:
+
+```ts
+export default defineConfig({
+  bundles: {
+    review: {
+      include: ["git:staged", "!bun.lock"],
+      prompt: "Review these changes for correctness.",
+    },
+  },
+});
+```
+
+See [Git sources](./configuration.md#git-sources-git-prefix) for `git:dirty`,
+`git:main`, and the rest.
+
 ## CLI Reference
 
 ::: code-group
@@ -166,6 +184,7 @@ export default defineConfig({
 ```sh [npm]
 npx srcpack              # Bundle all
 npx srcpack web api      # Bundle specific bundles only
+npx srcpack --staged     # Bundle staged changes (no config needed)
 npx srcpack --dry-run    # Preview without writing
 npx srcpack --no-upload  # Skip upload even if configured
 ```
@@ -173,6 +192,7 @@ npx srcpack --no-upload  # Skip upload even if configured
 ```sh [bun]
 bunx srcpack              # Bundle all
 bunx srcpack web api      # Bundle specific bundles only
+bunx srcpack --staged     # Bundle staged changes (no config needed)
 bunx srcpack --dry-run    # Preview without writing
 bunx srcpack --no-upload  # Skip upload even if configured
 ```
@@ -180,6 +200,7 @@ bunx srcpack --no-upload  # Skip upload even if configured
 ```sh [pnpm]
 pnpm dlx srcpack              # Bundle all
 pnpm dlx srcpack web api      # Bundle specific bundles only
+pnpm dlx srcpack --staged     # Bundle staged changes (no config needed)
 pnpm dlx srcpack --dry-run    # Preview without writing
 pnpm dlx srcpack --no-upload  # Skip upload even if configured
 ```
@@ -187,6 +208,7 @@ pnpm dlx srcpack --no-upload  # Skip upload even if configured
 ```sh [yarn]
 yarn dlx srcpack              # Bundle all
 yarn dlx srcpack web api      # Bundle specific bundles only
+yarn dlx srcpack --staged     # Bundle staged changes (no config needed)
 yarn dlx srcpack --dry-run    # Preview without writing
 yarn dlx srcpack --no-upload  # Skip upload even if configured
 ```

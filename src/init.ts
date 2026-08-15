@@ -86,7 +86,7 @@ async function promptBundle(
     message: isFirst ? "Bundle name:" : "Next bundle name:",
     placeholder: "api",
     validate: (value) => {
-      if (!value.trim()) return "Name is required";
+      if (!value?.trim()) return "Name is required";
       if (!/^[a-z][a-z0-9-]*$/.test(value)) {
         return "Use lowercase alphanumeric characters and hyphens";
       }
@@ -102,7 +102,7 @@ async function promptBundle(
     message: "Include patterns (comma-separated):",
     placeholder: "src/**/*",
     validate: (value) => {
-      if (!value.trim()) return "At least one pattern is required";
+      if (!value?.trim()) return "At least one pattern is required";
     },
   });
 
@@ -116,17 +116,23 @@ async function promptBundle(
   return { name: name.trim(), include };
 }
 
-function generateConfig(bundles: Bundle[], outDir: string): string {
+/**
+ * Render the config file. Every value goes through `JSON.stringify` so a
+ * backslash or quote can't corrupt the output — `"src\**\*"` would otherwise
+ * parse as `src***`, a pattern that matches nothing.
+ */
+export function generateConfig(bundles: Bundle[], outDir: string): string {
   const bundleEntries = bundles.map(({ name, include }) => {
-    const value =
-      include.length === 1 ? `"${include[0]}"` : JSON.stringify(include);
-    return `    ${name}: ${value},`;
+    const value = JSON.stringify(include.length === 1 ? include[0] : include);
+    // Names may contain hyphens, which a bare object key may not
+    const key = /^[a-z][a-z0-9]*$/.test(name) ? name : JSON.stringify(name);
+    return `    ${key}: ${value},`;
   });
 
   return `import { defineConfig } from "srcpack";
 
 export default defineConfig({
-  outDir: "${outDir}",
+  outDir: ${JSON.stringify(outDir)},
   bundles: {
 ${bundleEntries.join("\n")}
   },

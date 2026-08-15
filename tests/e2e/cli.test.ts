@@ -44,6 +44,21 @@ describe("cli", () => {
     );
   });
 
+  describe("version flag", () => {
+    test.each([["--version"], ["-v"]])(
+      "should print the package version when %p is passed",
+      async (flag) => {
+        const pkg = await Bun.file(
+          join(import.meta.dir, "../../package.json"),
+        ).json();
+        const result = await runCli([flag]);
+
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout.trim()).toBe(pkg.version);
+      },
+    );
+  });
+
   describe("init subcommand", () => {
     test("should exit gracefully in non-TTY mode", async () => {
       const result = await runCli(["init"]);
@@ -115,6 +130,14 @@ describe("cli", () => {
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain("Unknown bundle: unknown");
     });
+
+    test("should treat a subcommand name as a bundle when not first", async () => {
+      // `--since init` must diff against the `init` branch, not run the wizard
+      const result = await runCli(["--dry-run", "init"], { cwd: FIXTURE_PATH });
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("Unknown bundle: init");
+    });
   });
 
   describe("absolute outDir with custom root", () => {
@@ -146,6 +169,224 @@ describe("cli", () => {
       // Verify file was written to absolute outDir, not joined with root
       const outFile = Bun.file(join(tempOutDir, "app.txt"));
       expect(await outFile.exists()).toBe(true);
+    });
+  });
+
+  describe("own output", () => {
+    const project = join(tmpdir(), `srcpack-own-${Date.now()}`);
+
+    afterEach(async () => {
+      await rm(project, { recursive: true, force: true });
+    });
+
+    test("should refuse to empty an outDir that holds the project root", async () => {
+      await mkdir(join(project, "src"), { recursive: true });
+      await writeFile(join(project, "src/index.ts"), "export const x = 1;\n");
+      await writeFile(join(project, "keep.md"), "# keep\n");
+      await writeFile(
+        join(project, "srcpack.config.ts"),
+        `export default { outDir: ".", bundles: { app: "src/**/*" } };`,
+      );
+
+      const result = await runCli([], { cwd: project });
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("contains the project root");
+      // The whole project would otherwise be deleted
+      expect(await Bun.file(join(project, "keep.md")).exists()).toBe(true);
+      expect(await Bun.file(join(project, "src/index.ts")).exists()).toBe(true);
+    });
+
+    test("should keep other bundles when building a named subset", async () => {
+      await mkdir(join(project, "src"), { recursive: true });
+      await writeFile(join(project, "src/index.ts"), "export const x = 1;\n");
+      await writeFile(
+        join(project, "srcpack.config.ts"),
+        `export default { bundles: { web: "src/**/*", api: "src/**/*" } };`,
+      );
+
+      await runCli([], { cwd: project });
+      // Emptying outDir would delete api.txt, which this run cannot rebuild
+      await runCli(["web"], { cwd: project });
+
+      expect(await Bun.file(join(project, ".srcpack/api.txt")).exists()).toBe(
+        true,
+      );
+      expect(await Bun.file(join(project, ".srcpack/web.txt")).exists()).toBe(
+        true,
+      );
+    });
+
+    test("should not bundle a previous run's output", async () => {
+      await mkdir(join(project, "src"), { recursive: true });
+      await writeFile(join(project, "src/index.ts"), "export const x = 1;\n");
+      await writeFile(
+        join(project, "srcpack.config.ts"),
+        `export default { emptyOutDir: false, bundles: { app: "**/*" } };`,
+      );
+
+      await runCli([], { cwd: project });
+      const first = await Bun.file(join(project, ".srcpack/app.txt")).text();
+      await runCli([], { cwd: project });
+      const second = await Bun.file(join(project, ".srcpack/app.txt")).text();
+
+      // Without the guard each run nests the previous bundle one level deeper
+      expect(second).toBe(first);
+      expect(second).not.toContain(".srcpack/app.txt");
+    });
+  });
+
+  describe("ad-hoc git bundles", () => {
+    const repo = join(tmpdir(), `srcpack-adhoc-${Date.now()}`);
+
+    async function git(...args: string[]) {
+      const proc = Bun.spawn(
+        [
+          "git",
+          "-c",
+          "user.name=test",
+          "-c",
+          "user.email=test@example.com",
+          "-c",
+          "commit.gpgsign=false",
+          ...args,
+        ],
+        { cwd: repo, stdout: "pipe", stderr: "pipe" },
+      );
+      // Fail loudly: a silent setup failure would make the assertions lie
+      if ((await proc.exited) !== 0) {
+        throw new Error(
+          `git ${args.join(" ")} failed: ${await new Response(proc.stderr).text()}`,
+        );
+      }
+    }
+
+    afterEach(async () => {
+      await rm(repo, { recursive: true, force: true });
+    });
+
+    test("should bundle staged files without a config file", async () => {
+      await mkdir(join(repo, "src"), { recursive: true });
+      await writeFile(join(repo, "src/index.ts"), "export const x = 1;\n");
+      await writeFile(join(repo, "src/other.ts"), "export const y = 2;\n");
+      await git("init", "-b", "main");
+      await git("add", "src/index.ts");
+
+      const result = await runCli(["--staged"], { cwd: repo });
+
+      expect(result.exitCode).toBe(0);
+      const bundle = Bun.file(join(repo, ".srcpack/staged.txt"));
+      expect(await bundle.exists()).toBe(true);
+      const content = await bundle.text();
+      expect(content).toContain("src/index.ts");
+      expect(content).not.toContain("src/other.ts");
+    });
+
+    test("should bundle staged, unstaged, and untracked with --dirty", async () => {
+      await mkdir(join(repo, "src"), { recursive: true });
+      await writeFile(join(repo, "src/committed.ts"), "export const a = 1;\n");
+      await writeFile(join(repo, "src/tracked.ts"), "export const b = 2;\n");
+      await git("init", "-b", "main");
+      await git("add", ".");
+      await git("commit", "-m", "init");
+
+      await writeFile(join(repo, "src/tracked.ts"), "export const b = 22;\n");
+      await writeFile(join(repo, "src/fresh.ts"), "export const c = 3;\n");
+      await git("add", "src/tracked.ts");
+      await writeFile(join(repo, "src/tracked.ts"), "export const b = 222;\n");
+
+      const result = await runCli(["--dirty"], { cwd: repo });
+
+      expect(result.exitCode).toBe(0);
+      const content = await Bun.file(join(repo, ".srcpack/dirty.txt")).text();
+      expect(content).toContain("src/tracked.ts"); // staged + unstaged
+      expect(content).toContain("src/fresh.ts"); // untracked
+      expect(content).not.toContain("src/committed.ts"); // unchanged
+    });
+
+    test("should bundle branch work with --since, including untracked", async () => {
+      await mkdir(join(repo, "src"), { recursive: true });
+      await writeFile(join(repo, "src/base.ts"), "export const a = 1;\n");
+      await git("init", "-b", "main");
+      await git("add", ".");
+      await git("commit", "-m", "init");
+
+      await git("checkout", "-b", "feature");
+      await writeFile(join(repo, "src/onbranch.ts"), "export const b = 2;\n");
+      await git("add", "src/onbranch.ts");
+      await git("commit", "-m", "branch work");
+      await writeFile(join(repo, "src/untracked.ts"), "export const c = 3;\n");
+
+      const result = await runCli(["--since", "main"], { cwd: repo });
+
+      expect(result.exitCode).toBe(0);
+      const content = await Bun.file(join(repo, ".srcpack/since.txt")).text();
+      expect(content).toContain("src/onbranch.ts");
+      expect(content).toContain("src/untracked.ts");
+      expect(content).not.toContain("src/base.ts");
+    });
+
+    test("should skip writing when nothing is staged", async () => {
+      await mkdir(repo, { recursive: true });
+      await writeFile(join(repo, "README.md"), "# test\n");
+      await git("init", "-b", "main");
+
+      const result = await runCli(["--staged"], { cwd: repo });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("skipped");
+      expect(await Bun.file(join(repo, ".srcpack/staged.txt")).exists()).toBe(
+        false,
+      );
+    });
+
+    test("should report a git failure without a stack trace", async () => {
+      await mkdir(repo, { recursive: true });
+
+      const result = await runCli(["--staged"], { cwd: repo });
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("Not a git repository");
+      expect(result.stderr).not.toContain("at ");
+    });
+
+    test("should reject combining an ad-hoc flag with named bundles", async () => {
+      const result = await runCli(["code", "--staged"], { cwd: FIXTURE_PATH });
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("Cannot combine --staged");
+    });
+
+    test("should require a revision for --since", async () => {
+      const result = await runCli(["--since"], { cwd: FIXTURE_PATH });
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("Missing revision");
+    });
+
+    test("should not bundle a previous ad-hoc run's output", async () => {
+      // No config, so outDir is the only thing marking srcpack's own output —
+      // and `git:untracked` reports `.srcpack/dirty.txt` unless it is excluded
+      await mkdir(join(repo, "src"), { recursive: true });
+      await writeFile(join(repo, "src/index.ts"), "export const x = 1;\n");
+      await git("init", "-b", "main");
+
+      await runCli(["--dirty"], { cwd: repo });
+      const first = await Bun.file(join(repo, ".srcpack/dirty.txt")).text();
+      await runCli(["--dirty"], { cwd: repo });
+      const second = await Bun.file(join(repo, ".srcpack/dirty.txt")).text();
+
+      expect(second).toBe(first);
+      expect(second).not.toContain(".srcpack/dirty.txt");
+    });
+
+    test("should reject a range for --since", async () => {
+      const result = await runCli(["--since", "main...HEAD"], {
+        cwd: FIXTURE_PATH,
+      });
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("not a range");
     });
   });
 });

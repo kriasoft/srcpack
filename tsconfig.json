@@ -13,6 +13,10 @@
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
 
+    // TypeScript 6 defaults `types` to [] instead of auto-enumerating @types/*.
+    // @types/bun supplies the Bun globals and re-exports Node's, covering both.
+    "types": ["bun"],
+
     // Emit declarations only (Bun handles JS bundling)
     "declaration": true,
     "emitDeclarationOnly": true,

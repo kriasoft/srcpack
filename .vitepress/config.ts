@@ -15,7 +15,9 @@ export default defineConfig({
   description: "Context bundler for LLM work",
 
   head: [
-    ["link", { rel: "icon", href: "/srcpack/favicon.ico" }],
+    // Point at files that exist in public/ — there is no favicon.ico
+    ["link", { rel: "icon", type: "image/svg+xml", href: "/srcpack/logo.svg" }],
+    ["link", { rel: "icon", type: "image/png", href: "/srcpack/logo.png" }],
     ["meta", { name: "theme-color", content: "#5f67ee" }],
     ["meta", { property: "og:type", content: "website" }],
     ["meta", { property: "og:site_name", content: "Srcpack" }],
@@ -79,6 +81,7 @@ export default defineConfig({
     nav: [
       { text: "Home", link: "/" },
       { text: "Guide", link: "/getting-started" },
+      { text: "Decisions", link: "/adr/" },
     ],
 
     sidebar: [
@@ -90,6 +93,16 @@ export default defineConfig({
           { text: "Configuration", link: "/configuration" },
           { text: "CLI Reference", link: "/cli" },
           { text: "Google Drive Upload", link: "/upload" },
+        ],
+      },
+      {
+        text: "Architecture Decisions",
+        items: [
+          { text: "Overview", link: "/adr/" },
+          {
+            text: "001 — git: source tokens",
+            link: "/adr/001-git-source-tokens",
+          },
         ],
       },
     ],

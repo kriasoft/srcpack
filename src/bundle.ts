@@ -1,24 +1,46 @@
 // SPDX-License-Identifier: MIT
 
-import { open, readFile, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { lstat, open, readFile } from "node:fs/promises";
+import { isAbsolute, join, resolve, sep } from "node:path";
 import { glob } from "fast-glob";
 import picomatch from "picomatch";
 import ignore, { type Ignore } from "ignore";
-import { expandPath, type BundleConfigInput } from "./config.ts";
+import { ConfigError, expandPath, type BundleConfigInput } from "./config.ts";
+import { isGitSource, resolveGitSource } from "./git.ts";
 
 // Binary file detection: check first 8KB for null bytes (same heuristic as git)
 const BINARY_CHECK_SIZE = 8192;
 
-async function isBinary(filePath: string): Promise<boolean> {
-  const stats = await stat(filePath);
-  if (stats.size === 0) return false;
+/**
+ * Whether a path can be read into a bundle: an existing regular text file.
+ * Globs only yield files, but git can name a submodule directory or a file
+ * deleted from the worktree after it was listed.
+ *
+ * `lstat` deliberately does not follow symlinks: a tracked link such as
+ * `notes.txt -> ~/.ssh/id_rsa` would otherwise bundle a file from outside the
+ * project under an innocuous name. Point a pattern at the real path instead.
+ */
+async function isBundleable(filePath: string): Promise<boolean> {
+  let stats;
+  try {
+    stats = await lstat(filePath);
+  } catch {
+    return false;
+  }
+  if (!stats.isFile()) return false;
+  if (stats.size === 0) return true;
 
-  const fd = await open(filePath, "r");
+  // Racy against deletion between lstat and open, so failure means "skip"
+  let fd;
+  try {
+    fd = await open(filePath, "r");
+  } catch {
+    return false;
+  }
   try {
     const buffer = Buffer.alloc(Math.min(stats.size, BINARY_CHECK_SIZE));
     await fd.read(buffer, 0, buffer.length, 0);
-    return buffer.includes(0);
+    return !buffer.includes(0);
   } finally {
     await fd.close();
   }
@@ -41,7 +63,20 @@ export interface BundleResult {
  * - Regular patterns: included, filtered by .gitignore
  * - `!pattern`: excluded from results
  * - `+pattern`: force-included, bypasses .gitignore
+ *
+ * `git:` sources are include-only: `!` has no clear meaning for them, and `+`
+ * is redundant since they already bypass .gitignore.
  */
+/**
+ * Prepare a config pattern for matching: expand `~/`, then force posix
+ * separators. fast-glob and picomatch require them, but `~/` expansion and
+ * hand-written Windows paths produce backslashes.
+ */
+function toPattern(pattern: string): string {
+  const expanded = expandPath(pattern);
+  return sep === "\\" ? expanded.replaceAll("\\", "/") : expanded;
+}
+
 function normalizePatterns(config: BundleConfigInput): {
   include: string[];
   exclude: string[];
@@ -65,11 +100,23 @@ function normalizePatterns(config: BundleConfigInput): {
 
   for (const p of patterns) {
     if (p.startsWith("!")) {
-      exclude.push(p.slice(1));
+      exclude.push(toPattern(p.slice(1)));
     } else if (p.startsWith("+")) {
-      force.push(p.slice(1));
+      force.push(toPattern(p.slice(1)));
     } else {
-      include.push(p);
+      include.push(toPattern(p));
+    }
+  }
+
+  for (const [prefix, prefixed] of [
+    ["!", exclude],
+    ["+", force],
+  ] as const) {
+    const misused = prefixed.find(isGitSource);
+    if (misused) {
+      throw new ConfigError(
+        `Git sources cannot use the "${prefix}" prefix: "${prefix}${misused}"`,
+      );
     }
   }
 
@@ -164,79 +211,96 @@ async function loadGitignore(cwd: string): Promise<GitignoreResult> {
 /**
  * Check if a glob pattern references paths outside cwd.
  * Patterns traversing to parent directories start with ../ (or ./../).
+ * Absolute paths are also external.
  */
 function isExternalPattern(pattern: string): boolean {
+  // e.g. from ~/xxx expansion; isAbsolute also catches Windows drive letters
+  if (isAbsolute(pattern)) return true;
   // Handle redundant ./ prefix (e.g., ./../other)
   const normalized = pattern.startsWith("./") ? pattern.slice(2) : pattern;
   return normalized.startsWith("../");
 }
 
 /**
+ * Whether a path is one srcpack writes. `outputs` holds absolute paths of
+ * files or directories; a directory covers everything beneath it.
+ */
+function isOwnOutput(filePath: string, outputs: string[]): boolean {
+  return outputs.some(
+    (out) => filePath === out || filePath.startsWith(out + sep),
+  );
+}
+
+/**
  * Resolve bundle config to a list of file paths.
  * - Regular patterns respect .gitignore
  * - Force patterns (+prefix) bypass .gitignore
- * - Exclude patterns (!prefix) filter both
- * - External patterns (../) skip .gitignore entirely
+ * - Exclude patterns (!prefix) filter everything, including git sources
+ * - External patterns (`../`, absolute) skip .gitignore entirely
+ * - `git:` sources yield concrete paths and skip .gitignore (already tracked,
+ *   or reported by git only when not ignored)
+ *
+ * `outputs` names absolute paths srcpack writes (outDir, custom outfiles).
+ * They are never bundled: a rerun would otherwise bundle the previous run's
+ * output, nesting it one level deeper every time.
  */
 export async function resolvePatterns(
   config: BundleConfigInput,
   cwd: string,
+  outputs: string[] = [],
 ): Promise<string[]> {
   const { include, exclude, force } = normalizePatterns(config);
   const excludeMatchers = exclude.map((p) => picomatch(p));
-  const { ignore: gitignore, globPatterns } = await loadGitignore(cwd);
   const files = new Set<string>();
+  // Dedupe by absolute path, not by pattern text: an absolute pattern and a
+  // relative one can name the same file, which would bundle it twice.
+  const seen = new Set<string>();
 
-  // Split patterns into internal (within cwd) and external (../ prefixed)
-  const internalPatterns = include.filter((p) => !isExternalPattern(p));
-  const externalPatterns = include.filter(isExternalPattern);
+  // Absolute patterns (from `~/` or `/`) make fast-glob return absolute paths,
+  // so resolve rather than join — `join(cwd, "/abs")` would mangle them.
+  const add = async (candidates: string[]) => {
+    for (const path of candidates) {
+      if (isExcluded(path, excludeMatchers)) continue;
+      const absolute = resolve(cwd, path);
+      if (seen.has(absolute)) continue;
+      if (isOwnOutput(absolute, outputs)) continue;
+      if (await isBundleable(absolute)) {
+        seen.add(absolute);
+        files.add(path);
+      }
+    }
+  };
 
-  // Internal patterns: respect .gitignore
+  for (const source of include.filter(isGitSource)) {
+    await add(await resolveGitSource(source, cwd));
+  }
+
+  const globs = include.filter((p) => !isGitSource(p));
+
+  // Internal patterns (within cwd): respect .gitignore
+  const internalPatterns = globs.filter((p) => !isExternalPattern(p));
   if (internalPatterns.length > 0) {
+    const { ignore: gitignore, globPatterns } = await loadGitignore(cwd);
     const matches = await glob(internalPatterns, {
       cwd,
       onlyFiles: true,
       dot: true,
       ignore: globPatterns,
     });
-    for (const match of matches) {
-      if (!isExcluded(match, excludeMatchers) && !gitignore.ignores(match)) {
-        const fullPath = join(cwd, match);
-        if (!(await isBinary(fullPath))) {
-          files.add(match);
-        }
-      }
-    }
+    await add(matches.filter((m) => !gitignore.ignores(m)));
   }
 
   // External patterns: skip .gitignore (it doesn't apply outside cwd)
+  const externalPatterns = globs.filter(isExternalPattern);
   if (externalPatterns.length > 0) {
-    const matches = await glob(externalPatterns, {
-      cwd,
-      onlyFiles: true,
-      dot: true,
-    });
-    for (const match of matches) {
-      if (!isExcluded(match, excludeMatchers)) {
-        const fullPath = join(cwd, match);
-        if (!(await isBinary(fullPath))) {
-          files.add(match);
-        }
-      }
-    }
+    await add(
+      await glob(externalPatterns, { cwd, onlyFiles: true, dot: true }),
+    );
   }
 
   // Force includes: bypass .gitignore (no ignore patterns passed to glob)
   if (force.length > 0) {
-    const matches = await glob(force, { cwd, onlyFiles: true, dot: true });
-    for (const match of matches) {
-      if (!isExcluded(match, excludeMatchers)) {
-        const fullPath = join(cwd, match);
-        if (!(await isBinary(fullPath))) {
-          files.add(match);
-        }
-      }
-    }
+    await add(await glob(force, { cwd, onlyFiles: true, dot: true }));
   }
 
   // Sort for deterministic output
@@ -309,8 +373,7 @@ export async function createBundle(
 
   for (let i = 0; i < files.length; i++) {
     const filePath = files[i]!;
-    const fullPath = join(cwd, filePath);
-    const content = await readFile(fullPath, "utf-8");
+    const content = await readFile(resolve(cwd, filePath), "utf-8");
     const lines = countLines(content);
 
     // Separator takes 1 line, then content starts on next line
@@ -423,14 +486,15 @@ async function resolvePrompt(
 }
 
 /**
- * Bundle a single named bundle from config
+ * Bundle one config entry. `outputs` lists absolute paths srcpack writes,
+ * which are never bundled — see {@link resolvePatterns}.
  */
 export async function bundleOne(
-  name: string,
   config: BundleConfigInput,
   cwd: string,
+  outputs: string[] = [],
 ): Promise<BundleResult> {
-  const files = await resolvePatterns(config, cwd);
+  const files = await resolvePatterns(config, cwd, outputs);
   const includeIndex = getIncludeIndex(config);
   const prompt = await resolvePrompt(getPrompt(config), cwd);
   return createBundle(files, cwd, { includeIndex, prompt });

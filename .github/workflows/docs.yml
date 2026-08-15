@@ -1,0 +1,45 @@
+# Docs ship with the release, not with every push, so the site always
+# describes the version on npm. Use workflow_dispatch for typo fixes.
+name: Docs
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # A prerelease is not what `npm install srcpack` gives you, so it must not
+    # rewrite the site. Manual dispatch carries no release payload and so passes.
+    if: github.event_name == 'workflow_dispatch' || !github.event.release.prerelease
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # VitePress reads "Last updated" and sitemap <lastmod> from per-file git
+          # history. The default shallow clone dates every page to the release
+          # commit, so all timestamps collapse to one.
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - run: bun run docs:build
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: .vitepress/dist
+      - id: deploy
+        uses: actions/deploy-pages@v5

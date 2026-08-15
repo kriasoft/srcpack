@@ -201,6 +201,64 @@ describe("resolvePatterns", () => {
 
     expect(files).toContain("./../gitignore-project/src/index.ts");
   });
+
+  test("should resolve absolute patterns", async () => {
+    // fast-glob returns absolute paths for absolute patterns, so they must not
+    // be joined onto cwd
+    const files = await resolvePatterns(
+      join(gitignoreFixturesDir, "src/**/*.ts"),
+      fixturesDir,
+    );
+
+    expect(files).toContain(join(gitignoreFixturesDir, "src/index.ts"));
+  });
+
+  test("should bundle content from an absolute pattern", async () => {
+    const files = await resolvePatterns(
+      join(gitignoreFixturesDir, "src/index.ts"),
+      fixturesDir,
+    );
+    const result = await createBundle(files, fixturesDir);
+
+    expect(result.index).toHaveLength(1);
+    expect(result.index[0]!.lines).toBeGreaterThan(0);
+  });
+
+  test("should bundle a file once when named both ways", async () => {
+    const files = await resolvePatterns(
+      ["src/index.ts", join(fixturesDir, "src/index.ts")],
+      fixturesDir,
+    );
+
+    expect(files).toEqual(["src/index.ts"]);
+  });
+
+  test("should skip files under an output directory", async () => {
+    const files = await resolvePatterns("src/**/*", fixturesDir, [
+      join(fixturesDir, "src/utils"),
+    ]);
+
+    expect(files).toContain("src/index.ts");
+    expect(files.some((f) => f.startsWith("src/utils/"))).toBe(false);
+  });
+
+  test("should skip an output file without skipping its siblings", async () => {
+    const files = await resolvePatterns("src/**/*", fixturesDir, [
+      join(fixturesDir, "src/index.ts"),
+    ]);
+
+    expect(files).not.toContain("src/index.ts");
+    expect(files.length).toBeGreaterThan(0);
+  });
+
+  test("should not skip paths that merely share a prefix with an output", async () => {
+    // "src/util" is a prefix of "src/utils" but not a parent of it
+    const files = await resolvePatterns("src/**/*", fixturesDir, [
+      join(fixturesDir, "src/util"),
+    ]);
+
+    expect(files).toContain("src/utils/helpers.ts");
+  });
 });
 
 describe("formatIndex", () => {
@@ -405,14 +463,13 @@ describe("createBundle", () => {
 
 describe("bundleOne", () => {
   test("should include index by default", async () => {
-    const result = await bundleOne("web", "src/index.ts", fixturesDir);
+    const result = await bundleOne("src/index.ts", fixturesDir);
 
     expect(result.content).toContain("# Index");
   });
 
   test("should include index when explicitly enabled", async () => {
     const result = await bundleOne(
-      "web",
       { include: "src/index.ts", index: true },
       fixturesDir,
     );
@@ -422,7 +479,6 @@ describe("bundleOne", () => {
 
   test("should omit index when disabled in config", async () => {
     const result = await bundleOne(
-      "web",
       { include: "src/index.ts", index: false },
       fixturesDir,
     );
@@ -432,14 +488,13 @@ describe("bundleOne", () => {
   });
 
   test("should include index for string pattern config", async () => {
-    const result = await bundleOne("web", "src/index.ts", fixturesDir);
+    const result = await bundleOne("src/index.ts", fixturesDir);
 
     expect(result.content).toContain("# Index");
   });
 
   test("should include index for array pattern config", async () => {
     const result = await bundleOne(
-      "web",
       ["src/index.ts", "!src/utils/**"],
       fixturesDir,
     );
@@ -449,7 +504,6 @@ describe("bundleOne", () => {
 
   test("should prepend prompt from config", async () => {
     const result = await bundleOne(
-      "web",
       { include: "src/index.ts", prompt: "Review this code." },
       fixturesDir,
     );
@@ -461,7 +515,6 @@ describe("bundleOne", () => {
 
   test("should ignore empty prompt in config", async () => {
     const result = await bundleOne(
-      "web",
       { include: "src/index.ts", prompt: "" },
       fixturesDir,
     );
@@ -472,7 +525,6 @@ describe("bundleOne", () => {
 
   test("should ignore undefined prompt in config", async () => {
     const result = await bundleOne(
-      "web",
       { include: "src/index.ts", prompt: undefined },
       fixturesDir,
     );
@@ -483,7 +535,6 @@ describe("bundleOne", () => {
 
   test("should load prompt from file when path starts with ./", async () => {
     const result = await bundleOne(
-      "web",
       { include: "src/index.ts", prompt: "./prompts/review.md" },
       fixturesDir,
     );
@@ -497,7 +548,6 @@ describe("bundleOne", () => {
     // Verify ~/ paths are treated as file paths (throws for non-existent file)
     await expect(
       bundleOne(
-        "web",
         { include: "src/index.ts", prompt: "~/non-existent-srcpack-test.md" },
         fixturesDir,
       ),
@@ -506,7 +556,6 @@ describe("bundleOne", () => {
 
   test("should use literal prompt when not a path", async () => {
     const result = await bundleOne(
-      "web",
       { include: "src/index.ts", prompt: "Check for bugs." },
       fixturesDir,
     );
