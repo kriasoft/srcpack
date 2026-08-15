@@ -117,19 +117,68 @@ describe("resolveLinearSource", () => {
     const entries = await resolveLinearSource("ENG");
 
     expect(entries.map((e) => e.path)).toEqual([
+      "linear/issues.md",
       "linear/issues/ENG-1.md",
       "linear/issues/ENG-2.md",
     ]);
-    expect(entries[0]!.content).toContain("# ENG-1  Title of ENG-1");
-    expect(entries[0]!.content).toContain("State      In Progress (started)");
-    expect(entries[0]!.content).toContain("Priority   High");
-    expect(entries[0]!.content).toContain("Body text.");
+    expect(entries[1]!.content).toContain("# ENG-1  Title of ENG-1");
+    expect(entries[1]!.content).toContain("State      In Progress (started)");
+    expect(entries[1]!.content).toContain("Priority   High");
+    expect(entries[1]!.content).toContain("Body text.");
+  });
+
+  test("leads with a roster ordered by issue number", async () => {
+    // The bundle index lists paths, and `linear/issues/ENG-10.md` says nothing
+    // about ENG-10 — the roster is what makes the set readable at a glance.
+    stubLinear({
+      pages: [
+        [
+          issue("ENG-10"),
+          issue("ENG-2", { state: { name: "Backlog", type: "backlog" } }),
+        ],
+      ],
+    });
+
+    const [summary] = await resolveLinearSource("ENG");
+
+    expect(summary!.path).toBe("linear/issues.md");
+    expect(summary!.content).toContain("# ENG — 2 issues");
+    expect(summary!.content).toContain("In Progress 1 · Backlog 1");
+    // Numeric, not the lexical order the index is stuck with
+    expect(summary!.content.indexOf("| ENG-2 |")).toBeLessThan(
+      summary!.content.indexOf("| ENG-10 |"),
+    );
+  });
+
+  test("names the project in the roster when the source is scoped", async () => {
+    stubLinear({ pages: [[issue("ENG-1")]], projects: [{ id: "proj_123" }] });
+
+    const [summary] = await resolveLinearSource({
+      team: "ENG",
+      project: "Roadmap",
+    });
+
+    expect(summary!.content).toContain("# ENG / Roadmap — 1 issue");
+  });
+
+  test("escapes a pipe in a title so the roster table survives", async () => {
+    stubLinear({ pages: [[issue("ENG-1", { title: "Parse a | b" })]] });
+
+    const [summary] = await resolveLinearSource("ENG");
+
+    expect(summary!.content).toContain("Parse a \\| b");
+  });
+
+  test("emits no roster when the team has no issues", async () => {
+    stubLinear({ pages: [[]] });
+
+    expect(await resolveLinearSource("ENG")).toEqual([]);
   });
 
   test("renders missing fields as em dashes, not undefined", async () => {
     stubLinear({ pages: [[issue("ENG-1", { description: null })]] });
 
-    const [entry] = await resolveLinearSource("ENG");
+    const [, entry] = await resolveLinearSource("ENG");
 
     expect(entry!.content).toContain("Assignee   —");
     expect(entry!.content).toContain("(no description)");
@@ -148,7 +197,7 @@ describe("resolveLinearSource", () => {
       ],
     });
 
-    const [entry] = await resolveLinearSource("ENG");
+    const [, entry] = await resolveLinearSource("ENG");
 
     expect(entry!.content).toContain("Before [embed] after");
     expect(entry!.content).not.toContain("linear-embed");
@@ -161,7 +210,7 @@ describe("resolveLinearSource", () => {
 
     const entries = await resolveLinearSource("ENG");
 
-    expect(entries).toHaveLength(3);
+    expect(entries).toHaveLength(4); // roster + one issue per page
     // Counting entries alone would still pass if `after: $cursor` were dropped,
     // so assert each page was requested with the cursor the previous one returned
     expect(
@@ -316,11 +365,12 @@ describe("resolveEntries with a linear source", () => {
 
     expect(entries.map((e) => e.path)).toEqual([
       "docs/readme.md",
+      "linear/issues.md",
       "linear/issues/ENG-1.md",
     ]);
-    // Files stay lazy; only the virtual entry carries content
+    // Files stay lazy; only the virtual entries carry content
     expect(entries[0]!.content).toBeUndefined();
-    expect(entries[1]!.content).toContain("# ENG-1");
+    expect(entries[2]!.content).toContain("# ENG-1");
   });
 
   test("applies ! exclusions to issues as well as files", async () => {
@@ -333,6 +383,7 @@ describe("resolveEntries with a linear source", () => {
 
     expect(entries.map((e) => e.path)).toEqual([
       "docs/readme.md",
+      "linear/issues.md",
       "linear/issues/ENG-2.md",
     ]);
   });
@@ -342,7 +393,10 @@ describe("resolveEntries with a linear source", () => {
 
     const entries = await resolveEntries({ linear: "ENG" }, dir);
 
-    expect(entries.map((e) => e.path)).toEqual(["linear/issues/ENG-1.md"]);
+    expect(entries.map((e) => e.path)).toEqual([
+      "linear/issues.md",
+      "linear/issues/ENG-1.md",
+    ]);
   });
 
   test("errors when a real file collides with an issue path", async () => {
@@ -372,7 +426,7 @@ describe("resolveEntries with a linear source", () => {
   test("keeps an empty issue description from falling back to disk", async () => {
     // `??` not `||`: an empty virtual entry must not be read from the filesystem
     stubLinear({ pages: [[issue("ENG-1")]] });
-    const [entry] = await resolveEntries({ linear: "ENG" }, dir);
+    const [, entry] = await resolveEntries({ linear: "ENG" }, dir);
     const empty = { path: entry!.path, content: "" };
 
     const bundle = await createBundle([empty], dir);

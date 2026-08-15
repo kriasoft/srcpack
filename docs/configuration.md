@@ -205,14 +205,34 @@ Notes:
 A bundle can pull issues from [Linear](https://linear.app) alongside your code. Each issue becomes a virtual file at `linear/issues/<identifier>.md`, so it gets its own index entry and line range:
 
 ```
-# Index (4 files)
-# [1]   docs/roadmap.md  L8-L93 (86 lines)
-# [2]   linear/issues/ENG-123.md  L95-L122 (28 lines)
-# [3]   linear/issues/ENG-148.md  L124-L159 (36 lines)
-# [4]   src/board.ts  L161-L289 (129 lines)
+# Index (5 files)
+# [1]   docs/roadmap.md  L9-L94 (86 lines)
+# [2]   linear/issues.md  L96-L103 (8 lines)
+# [3]   linear/issues/ENG-123.md  L105-L132 (28 lines)
+# [4]   linear/issues/ENG-148.md  L134-L169 (36 lines)
+# [5]   src/board.ts  L171-L299 (129 lines)
 ```
 
-That lets you ask an LLM things like _"does `[4] src/board.ts` actually implement `[2] ENG-123`?"_
+That lets you ask an LLM things like _"does `[5] src/board.ts` actually implement `[3] ENG-123`?"_
+
+### Roster
+
+`linear/issues.md` is generated alongside the issues: a scope heading, a count per workflow state, and one table row per issue ordered by number.
+
+```markdown
+# ENG / Roadmap — 2 issues
+
+Backlog 1 · In Progress 1
+
+| Issue   | State       | Priority | Title                     |
+| ------- | ----------- | -------- | ------------------------- |
+| ENG-123 | In Progress | High     | Board history and restore |
+| ENG-148 | Backlog     | Medium   | Weekly digest email       |
+```
+
+It exists because the index lists paths, and `linear/issues/ENG-148.md` says nothing about ENG-148 — without a roster a model has to read every issue body to find the relevant ones, and cannot answer "what is in progress" at all. The rows are ordered by issue number, which the index itself cannot be: it sorts paths as text, so `ENG-2` lands between `ENG-19` and `ENG-20`.
+
+Drop it with `!linear/issues.md` if you only want the issue bodies.
 
 ### Setup
 

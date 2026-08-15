@@ -251,6 +251,52 @@ function labelNames(issue: Issue): string[] {
   );
 }
 
+/** The number in `SM-13`, for ordering. Non-numeric suffixes sort last. */
+function issueNumber(issue: Issue): number {
+  const n = Number(issue.identifier.split("-").pop());
+  return Number.isFinite(n) ? n : Number.MAX_SAFE_INTEGER;
+}
+
+/**
+ * A roster of every issue in the bundle, emitted as the first Linear entry.
+ *
+ * The bundle index lists paths, and `linear/issues/SM-13.md` says nothing about
+ * what SM-13 is — so without this a model has to read forty issue bodies to
+ * find the two that matter, and can't answer "what's in progress" at all.
+ *
+ * Rows are ordered by issue number, which the index itself cannot be: it sorts
+ * paths as text, so SM-2 lands between SM-19 and SM-20.
+ */
+function renderSummary(scope: string, issues: Issue[]): string {
+  const tally = new Map<string, number>();
+  for (const issue of issues) {
+    tally.set(issue.state.name, (tally.get(issue.state.name) ?? 0) + 1);
+  }
+  const counts = [...tally]
+    .sort((a, b) => b[1] - a[1])
+    .map(([name, n]) => `${name} ${n}`)
+    .join(" · ");
+
+  const rows = [...issues]
+    .sort((a, b) => issueNumber(a) - issueNumber(b))
+    .map((issue) => {
+      // A title carrying `|` would otherwise split into a phantom column
+      const title = issue.title.replace(/\|/g, "\\|");
+      const priority = PRIORITY[issue.priority] ?? String(issue.priority);
+      return `| ${issue.identifier} | ${issue.state.name} | ${priority} | ${title} |`;
+    });
+
+  return [
+    `# ${scope} — ${issues.length} ${issues.length === 1 ? "issue" : "issues"}`,
+    "",
+    counts,
+    "",
+    "| Issue | State | Priority | Title |",
+    "| --- | --- | --- | --- |",
+    ...rows,
+  ].join("\n");
+}
+
 /** Render one issue as markdown: a title, an aligned field block, the body. */
 function render(issue: Issue): string {
   const field = (name: string, value: string | null | undefined) =>
@@ -302,9 +348,21 @@ export async function resolveLinearSource(
   if (!includeClosed) filter.state = { type: { nin: CLOSED_STATES } };
 
   const issues = await fetchIssues(filter, token);
+  if (issues.length === 0) return [];
 
-  return issues.map((issue) => ({
-    path: `linear/issues/${issue.identifier}.md`,
-    content: render(issue),
-  }));
+  // Sorts ahead of `linear/issues/…` because "." precedes "/", so the roster is
+  // the first Linear entry a reader meets. Subject to the same collision check
+  // and `!` exclusions as any other entry.
+  const scope = project ? `${team} / ${project}` : team;
+  const entries = [
+    { path: "linear/issues.md", content: renderSummary(scope, issues) },
+  ];
+
+  for (const issue of issues) {
+    entries.push({
+      path: `linear/issues/${issue.identifier}.md`,
+      content: render(issue),
+    });
+  }
+  return entries;
 }

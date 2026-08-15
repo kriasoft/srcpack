@@ -25,6 +25,12 @@ interface Entry {
 
 Everything downstream then works unchanged: index numbering, `#==>` separators, line-range math, deterministic sort, and `!` exclusions all apply to issues exactly as they do to files. One file per issue, not one blob, so each issue earns its own index line and can be cited as `[2] ENG-123`.
 
+**A roster leads the set, at `linear/issues.md`.** One file per issue makes each citable, but it also means the index — the thing a model reads first — becomes forty lines of `linear/issues/ENG-*.md`, which carry no information. For a code file the path _is_ the summary; for an issue the identifier is opaque. The roster restores that: a scope heading, a count per state, and a row per issue with state, priority and title.
+
+It also carries the only sensible ordering. Entries sort by path as text, so `ENG-2` falls between `ENG-19` and `ENG-20`; natural-sorting the whole bundle to fix that would change ordering for every file in every bundle, which is a much larger claim than this needs. The roster is ordered by issue number instead, and the bodies keep the uniform path sort.
+
+The path sits outside `linear/issues/` so it sorts ahead of the issues it describes (`.` precedes `/`), and it is an ordinary entry — the same collision check and `!` exclusions apply, so `!linear/issues.md` drops it.
+
 **The surface is a `linear` key on the bundle, not a pattern token:**
 
 ```ts
