@@ -103,6 +103,18 @@ export default defineConfig({
             text: "001 — git: source tokens",
             link: "/adr/001-git-source-tokens",
           },
+          {
+            text: "002 — Minimum Node version",
+            link: "/adr/002-minimum-node-version",
+          },
+          {
+            text: "003 — Linear issues as virtual files",
+            link: "/adr/003-linear-issues-as-virtual-files",
+          },
+          {
+            text: "004 — Path boundaries",
+            link: "/adr/004-path-boundaries",
+          },
         ],
       },
     ],

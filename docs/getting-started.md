@@ -72,7 +72,9 @@ export default defineConfig({
 Run the bundle command and you'll see:
 
 ```
-✓ app  →  .srcpack/app.txt  (12 files, 2.4 KB)
+  app  12 files  240 lines  → .srcpack/app.txt
+
+Bundled: 1 bundle, 12 files, 240 lines
 ```
 
 ## Understanding the Output
@@ -176,6 +178,27 @@ export default defineConfig({
 
 See [Git sources](./configuration.md#git-sources-git-prefix) for `git:dirty`,
 `git:main`, and the rest.
+
+### Code and Tickets Together
+
+A bundle can include [Linear](https://linear.app) issues next to your code, so
+the LLM sees both the intent and the implementation:
+
+```ts
+export default defineConfig({
+  bundles: {
+    planning: {
+      include: ["src/**/*.ts", "docs/**/*.md"],
+      linear: { team: "ENG", project: "Roadmap" },
+      prompt: "Which roadmap items are already implemented?",
+    },
+  },
+});
+```
+
+Each issue becomes its own indexed entry (`linear/issues/ENG-123.md`). Set
+`LINEAR_API_KEY` in your environment first — see
+[Linear issues](./configuration.md#linear-issues).
 
 ## CLI Reference
 

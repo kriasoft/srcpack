@@ -1,17 +1,21 @@
-import { mkdir, rm, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { describe, expect, test, afterEach } from "bun:test";
+import { join } from "node:path";
 
 const CLI_PATH = join(import.meta.dir, "../../src/cli.ts");
 const FIXTURE_PATH = join(import.meta.dir, "../fixtures/sample-project");
 
 async function runCli(
   args: string[],
-  options?: { cwd?: string },
+  options?: { cwd?: string; unsetEnv?: string[] },
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+  const env = { ...process.env };
+  for (const key of options?.unsetEnv ?? []) delete env[key];
+
   const proc = Bun.spawn(["bun", CLI_PATH, ...args], {
     cwd: options?.cwd,
+    env,
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -57,6 +61,46 @@ describe("cli", () => {
         expect(result.stdout.trim()).toBe(pkg.version);
       },
     );
+  });
+
+  describe("argument validation", () => {
+    // Dropping an unknown flag turns the safe command the user typed into the
+    // dangerous one they didn't: --no-uplaod uploads, --dry-rnu writes
+    test.each([["--no-uplaod"], ["--dry-rnu"], ["--no-emptyOutdir"]])(
+      "should reject %p instead of ignoring it",
+      async (flag) => {
+        const result = await runCli([flag], { cwd: FIXTURE_PATH });
+
+        expect(result.exitCode).toBe(1);
+        expect(result.stderr).toContain(`Unknown option: ${flag}`);
+      },
+    );
+
+    test("should reject contradictory emptyOutDir flags", async () => {
+      const result = await runCli(["--emptyOutDir", "--no-emptyOutDir"], {
+        cwd: FIXTURE_PATH,
+      });
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("Cannot combine");
+    });
+
+    test.each([["init"], ["login"]])(
+      "should reject arguments to %p, which takes none",
+      async (command) => {
+        const result = await runCli([command, "--wat"], { cwd: FIXTURE_PATH });
+
+        expect(result.exitCode).toBe(1);
+        expect(result.stderr).toContain("takes no arguments");
+      },
+    );
+
+    test("should treat an inherited property as an unknown bundle", async () => {
+      const result = await runCli(["toString"], { cwd: FIXTURE_PATH });
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("Unknown bundle: toString");
+    });
   });
 
   describe("init subcommand", () => {
@@ -172,6 +216,54 @@ describe("cli", () => {
     });
   });
 
+  describe("failed run", () => {
+    const project = join(tmpdir(), `srcpack-fail-${Date.now()}`);
+
+    afterEach(async () => {
+      await rm(project, { recursive: true, force: true });
+    });
+
+    test("should keep the previous output when a bundle fails to resolve", async () => {
+      await mkdir(join(project, "docs"), { recursive: true });
+      await writeFile(join(project, "docs/readme.md"), "# Readme\n");
+      const config = join(project, "srcpack.config.ts");
+      await writeFile(
+        config,
+        `export default { bundles: { docs: "docs/**/*.md" } };`,
+      );
+
+      const good = await runCli([], { cwd: project });
+      expect(good.exitCode).toBe(0);
+
+      const bundle = Bun.file(join(project, ".srcpack/docs.txt"));
+      const before = await bundle.text();
+
+      // Now add a bundle that cannot resolve. `linear` needs no network to
+      // fail: with no API key it throws before the first request.
+      await writeFile(
+        config,
+        `export default {
+          bundles: {
+            docs: "docs/**/*.md",
+            backlog: { linear: "ENG" },
+          },
+        };`,
+      );
+
+      const failed = await runCli([], {
+        cwd: project,
+        unsetEnv: ["LINEAR_API_KEY"],
+      });
+
+      expect(failed.exitCode).toBe(1);
+      expect(failed.stderr).toContain("LINEAR_API_KEY is not set");
+      // outDir is emptied before writing, so emptying it before resolving
+      // would leave nothing behind when a later bundle throws
+      expect(await bundle.exists()).toBe(true);
+      expect(await bundle.text()).toBe(before);
+    });
+  });
+
   describe("own output", () => {
     const project = join(tmpdir(), `srcpack-own-${Date.now()}`);
 
@@ -185,7 +277,7 @@ describe("cli", () => {
       await writeFile(join(project, "keep.md"), "# keep\n");
       await writeFile(
         join(project, "srcpack.config.ts"),
-        `export default { outDir: ".", bundles: { app: "src/**/*" } };`,
+        `export default { outDir: ".", emptyOutDir: true, bundles: { app: "src/**/*" } };`,
       );
 
       const result = await runCli([], { cwd: project });
@@ -195,6 +287,355 @@ describe("cli", () => {
       // The whole project would otherwise be deleted
       expect(await Bun.file(join(project, "keep.md")).exists()).toBe(true);
       expect(await Bun.file(join(project, "src/index.ts")).exists()).toBe(true);
+    });
+
+    test("should not empty a custom outDir unless asked", async () => {
+      // `outDir: "src"` reads as an ordinary setting; auto-emptying it would
+      // delete the sources the same config asks to bundle
+      await mkdir(join(project, "src"), { recursive: true });
+      await writeFile(join(project, "src/index.ts"), "export const x = 1;\n");
+      await writeFile(
+        join(project, "srcpack.config.ts"),
+        `export default { outDir: "src", bundles: { app: "src/**/*.ts" } };`,
+      );
+
+      const result = await runCli([], { cwd: project });
+
+      expect(result.exitCode).toBe(0);
+      expect(await Bun.file(join(project, "src/index.ts")).exists()).toBe(true);
+    });
+
+    test("should refuse a .srcpack that resolves outside the project", async () => {
+      // Lexically `.srcpack` is inside the project; physically it is someone
+      // else's directory. Declining to empty it isn't enough — writing there
+      // still overwrites whatever shares a name with a bundle.
+      const elsewhere = `${project}-elsewhere`;
+      await mkdir(elsewhere, { recursive: true });
+      await mkdir(project, { recursive: true });
+      await writeFile(join(elsewhere, "sentinel.txt"), "do not delete\n");
+      await symlink(elsewhere, join(project, ".srcpack"));
+      await writeFile(join(project, "a.md"), "# a\n");
+      await writeFile(
+        join(project, "srcpack.config.ts"),
+        `export default { bundles: { docs: "*.md" } };`,
+      );
+
+      const result = await runCli([], { cwd: project });
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("it resolves to");
+      expect(await Bun.file(join(elsewhere, "sentinel.txt")).exists()).toBe(
+        true,
+      );
+      expect(await Bun.file(join(elsewhere, "docs.txt")).exists()).toBe(false);
+      await rm(elsewhere, { recursive: true, force: true });
+    });
+
+    test("should still exclude stale output when root reaches it through a link", async () => {
+      // `root` is spelled with a symlink, so the paths srcpack compares are
+      // lexical while the directory it owns resolves elsewhere. Mixing the two
+      // makes the previous run's bundle look like an ordinary source file.
+      const real = join(project, "real");
+      await mkdir(join(real, ".srcpack"), { recursive: true });
+      await symlink(real, join(project, "app"));
+      await writeFile(join(real, "a.md"), "# a\n");
+      await writeFile(
+        join(real, ".srcpack/old-name.txt"),
+        "STALE BUNDLE FROM A RENAMED CONFIG\n",
+      );
+      await writeFile(
+        join(project, "srcpack.config.ts"),
+        `export default { root: "./app", emptyOutDir: false, bundles: { current: "**/*" } };`,
+      );
+
+      const result = await runCli([], { cwd: project });
+
+      expect(result.exitCode).toBe(0);
+      const bundle = await Bun.file(join(real, ".srcpack/current.txt")).text();
+      expect(bundle).not.toContain("STALE BUNDLE");
+    });
+
+    test("should replace a symlinked output instead of writing through it", async () => {
+      // Nothing empties outDir here, so the link is still in place at write
+      // time — and writing in place would land in the linked file
+      const elsewhere = `${project}-elsewhere`;
+      await mkdir(elsewhere, { recursive: true });
+      await mkdir(join(project, ".srcpack"), { recursive: true });
+      await writeFile(join(elsewhere, "private.txt"), "untouched\n");
+      await symlink(
+        join(elsewhere, "private.txt"),
+        join(project, ".srcpack/docs.txt"),
+      );
+      await writeFile(join(project, "a.md"), "# a\n");
+      await writeFile(
+        join(project, "srcpack.config.ts"),
+        `export default { emptyOutDir: false, bundles: { docs: "*.md" } };`,
+      );
+
+      const result = await runCli([], { cwd: project });
+
+      expect(result.exitCode).toBe(0);
+      expect(await Bun.file(join(elsewhere, "private.txt")).text()).toBe(
+        "untouched\n",
+      );
+      expect(
+        await Bun.file(join(project, ".srcpack/docs.txt")).text(),
+      ).toContain("# a");
+      await rm(elsewhere, { recursive: true, force: true });
+    });
+
+    test("should reject two bundles whose paths alias one file", async () => {
+      await mkdir(join(project, "src"), { recursive: true });
+      await mkdir(join(project, ".srcpack"), { recursive: true });
+      await writeFile(join(project, "src/index.ts"), "export const x = 1;\n");
+      await symlink(join(project, ".srcpack"), join(project, "alias"));
+      await writeFile(
+        join(project, "srcpack.config.ts"),
+        `export default { bundles: {
+           frontend: { include: "src/**/*", outfile: ".srcpack/ctx.txt" },
+           backend: { include: "src/**/*", outfile: "alias/ctx.txt" },
+         } };`,
+      );
+
+      const result = await runCli([], { cwd: project });
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("both write to");
+    });
+
+    // "Café.txt" precomposed (U+00E9) and decomposed (e + U+0301). APFS stores
+    // whichever spelling it is given but resolves both to one directory entry.
+    // Written as escapes: a literal would be at the mercy of whatever
+    // normalisation an editor or formatter applies to this file.
+    const NFC_NAME = "Caf\u00e9.txt";
+    const NFD_NAME = "Cafe\u0301.txt";
+
+    test("should reject two bundles whose outfiles differ only by normalisation", async () => {
+      await mkdir(join(project, "src"), { recursive: true });
+      await writeFile(join(project, "src/index.ts"), "export const x = 1;\n");
+      await writeFile(
+        join(project, "srcpack.config.ts"),
+        `export default { bundles: {
+           frontend: { include: "src/**/*", outfile: ".srcpack/${NFC_NAME}" },
+           backend: { include: "src/**/*", outfile: ".srcpack/${NFD_NAME}" },
+         } };`,
+      );
+
+      const result = await runCli([], { cwd: project });
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("both write to");
+    });
+
+    test("should exclude a stale output whose name differs only by normalisation", async () => {
+      await mkdir(join(project, "generated"), { recursive: true });
+      await writeFile(join(project, "generated/notes.md"), "# notes\n");
+      await writeFile(
+        join(project, `generated/${NFC_NAME}`),
+        "STALE BUNDLE FROM THE PREVIOUS RUN\n",
+      );
+      await writeFile(
+        join(project, "srcpack.config.ts"),
+        `export default { bundles: {
+           ctx: { include: "generated/**/*", outfile: "generated/${NFD_NAME}" },
+         } };`,
+      );
+
+      const result = await runCli([], { cwd: project });
+
+      expect(result.exitCode).toBe(0);
+      const bundle = await Bun.file(
+        join(project, `generated/${NFD_NAME}`),
+      ).text();
+      expect(bundle).toContain("# notes");
+      expect(bundle).not.toContain("STALE BUNDLE");
+    });
+
+    test("should never empty a directory that only case-matches .srcpack", async () => {
+      // Ownership is an exact match on purpose, so `.SRCPACK` is never the
+      // directory srcpack clears unasked. How it declines differs by
+      // filesystem — refused as a redirected `.srcpack` where case folds, an
+      // unrelated directory where it doesn't — but the contents survive either
+      // way, which is the property worth pinning.
+      await mkdir(join(project, ".SRCPACK"), { recursive: true });
+      await writeFile(
+        join(project, ".SRCPACK/sentinel.txt"),
+        "irreplaceable\n",
+      );
+      await writeFile(join(project, "a.md"), "# a\n");
+      await writeFile(
+        join(project, "srcpack.config.ts"),
+        `export default { bundles: { docs: "*.md" } };`,
+      );
+
+      await runCli([], { cwd: project });
+
+      expect(
+        await Bun.file(join(project, ".SRCPACK/sentinel.txt")).text(),
+      ).toBe("irreplaceable\n");
+    });
+
+    test("should reject two bundles whose outfiles differ only by case", async () => {
+      // macOS and Windows fold case, so these are one directory entry there and
+      // the second bundle silently replaces the first. Rejected everywhere: a
+      // config that survives on Linux and loses a bundle on a laptop is worse
+      // than one that fails the same way on both.
+      await mkdir(join(project, "src"), { recursive: true });
+      await writeFile(join(project, "src/index.ts"), "export const x = 1;\n");
+      await writeFile(
+        join(project, "srcpack.config.ts"),
+        `export default { bundles: {
+           Web: { include: "src/**/*", outfile: ".srcpack/Context.txt" },
+           web: { include: "src/**/*", outfile: ".srcpack/context.txt" },
+         } };`,
+      );
+
+      const result = await runCli([], { cwd: project });
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("both write to");
+      expect(
+        await Bun.file(join(project, ".srcpack/Context.txt")).exists(),
+      ).toBe(false);
+    });
+
+    test("should exclude a stale output whose name differs only by case", async () => {
+      await mkdir(join(project, "generated"), { recursive: true });
+      await writeFile(join(project, "generated/notes.md"), "# notes\n");
+      await writeFile(
+        join(project, "generated/Context.txt"),
+        "STALE BUNDLE FROM THE PREVIOUS RUN\n",
+      );
+      await writeFile(
+        join(project, "srcpack.config.ts"),
+        `export default { bundles: {
+           ctx: { include: "generated/**/*", outfile: "generated/context.txt" },
+         } };`,
+      );
+
+      const result = await runCli([], { cwd: project });
+
+      expect(result.exitCode).toBe(0);
+      const written = join(project, "generated/context.txt");
+      const bundle = await Bun.file(written).text();
+      expect(bundle).toContain("# notes");
+      expect(bundle).not.toContain("STALE BUNDLE");
+    });
+
+    test("should exclude stale bundles under an outDir named by a link", async () => {
+      await mkdir(join(project, "generated"), { recursive: true });
+      await symlink(join(project, "generated"), join(project, "alias"));
+      await writeFile(join(project, "notes.md"), "# notes\n");
+      await writeFile(
+        join(project, "generated/old-name.txt"),
+        "STALE BUNDLE FROM A RENAMED CONFIG\n",
+      );
+      await writeFile(
+        join(project, "srcpack.config.ts"),
+        `export default { outDir: "alias", bundles: { ctx: ["**/*"] } };`,
+      );
+
+      const result = await runCli([], { cwd: project });
+
+      expect(result.exitCode).toBe(0);
+      const bundle = await Bun.file(join(project, "generated/ctx.txt")).text();
+      expect(bundle).toContain("# notes");
+      expect(bundle).not.toContain("STALE BUNDLE");
+    });
+
+    test("should exclude a custom outfile when root reaches it through a link", async () => {
+      // The mirror of the case above: here the glob yields lexical paths and the
+      // outfile resolves physically. Neither identity alone covers both.
+      const real = join(project, "real");
+      await mkdir(real, { recursive: true });
+      await symlink(real, join(project, "app"));
+      await writeFile(join(real, "a.md"), "# a\n");
+      await writeFile(
+        join(real, "ctx.txt"),
+        "STALE BUNDLE FROM THE PREVIOUS RUN\n",
+      );
+      await writeFile(
+        join(project, "srcpack.config.ts"),
+        `export default { root: "./app", bundles: {
+           ctx: { include: "**/*", outfile: "ctx.txt" },
+         } };`,
+      );
+
+      const result = await runCli([], { cwd: project });
+
+      expect(result.exitCode).toBe(0);
+      const bundle = await Bun.file(join(real, "ctx.txt")).text();
+      expect(bundle).toContain("# a");
+      expect(bundle).not.toContain("STALE BUNDLE");
+    });
+
+    test("should reject aliased outfiles under a directory that does not exist yet", async () => {
+      // The alias only becomes visible once the intermediate directories are
+      // created, which the first write does. Resolving a fixed number of levels
+      // calls these two different files right up until they turn out to be one.
+      await mkdir(join(project, "src"), { recursive: true });
+      await mkdir(join(project, ".srcpack"), { recursive: true });
+      await writeFile(join(project, "src/index.ts"), "export const x = 1;\n");
+      await symlink(join(project, ".srcpack"), join(project, "alias"));
+      await writeFile(
+        join(project, "srcpack.config.ts"),
+        `export default { bundles: {
+           frontend: { include: "src/**/*", outfile: ".srcpack/nested/deep/ctx.txt" },
+           backend: { include: "src/**/*", outfile: "alias/nested/deep/ctx.txt" },
+         } };`,
+      );
+
+      const result = await runCli([], { cwd: project });
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("both write to");
+      expect(
+        await Bun.file(join(project, ".srcpack/nested/deep/ctx.txt")).exists(),
+      ).toBe(false);
+    });
+
+    test("should exclude a custom outfile reached through a link from its own sources", async () => {
+      // The outfile and the source glob name one directory by two spellings, so
+      // lexical comparison alone lets the previous run's bundle back in.
+      await mkdir(join(project, "generated"), { recursive: true });
+      await symlink(join(project, "generated"), join(project, "alias"));
+      await writeFile(join(project, "generated/notes.md"), "# notes\n");
+      await writeFile(
+        join(project, "generated/context.txt"),
+        "STALE BUNDLE FROM THE PREVIOUS RUN\n",
+      );
+      await writeFile(
+        join(project, "srcpack.config.ts"),
+        `export default { bundles: {
+           context: { include: "generated/**/*", outfile: "alias/context.txt" },
+         } };`,
+      );
+
+      const result = await runCli([], { cwd: project });
+
+      expect(result.exitCode).toBe(0);
+      const bundle = await Bun.file(
+        join(project, "generated/context.txt"),
+      ).text();
+      expect(bundle).toContain("# notes");
+      expect(bundle).not.toContain("STALE BUNDLE");
+    });
+
+    test("should reject two bundles writing to one file", async () => {
+      await mkdir(join(project, "src"), { recursive: true });
+      await writeFile(join(project, "src/index.ts"), "export const x = 1;\n");
+      await writeFile(
+        join(project, "srcpack.config.ts"),
+        `export default { bundles: {
+           frontend: { include: "src/**/*", outfile: ".srcpack/ctx.txt" },
+           backend: { include: "src/**/*", outfile: ".srcpack/ctx.txt" },
+         } };`,
+      );
+
+      const result = await runCli([], { cwd: project });
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("both write to");
     });
 
     test("should keep other bundles when building a named subset", async () => {

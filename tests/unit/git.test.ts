@@ -1,9 +1,9 @@
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { execFile } from "node:child_process";
-import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createBundle, resolvePatterns } from "../../src/bundle.ts";
 import { ConfigError } from "../../src/config.ts";
 import { GitError, isGitSource, resolveGitSource } from "../../src/git.ts";
@@ -263,7 +263,10 @@ describe("resolvePatterns with git sources", () => {
 
   test("should not follow a symlink out of the repository", async () => {
     const files = await resolvePatterns("git:staged", repo);
-    const bundle = await createBundle(files, repo);
+    const bundle = await createBundle(
+      files.map((path) => ({ path })),
+      repo,
+    );
 
     expect(files).toContain("base.ts");
     expect(files).not.toContain("leak.txt");

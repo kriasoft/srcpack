@@ -48,14 +48,14 @@ Or add to `package.json`:
 
 ### Options
 
-| Option        | Default    | Description                            |
-| ------------- | ---------- | -------------------------------------- |
-| `outDir`      | `.srcpack` | Output directory for bundles           |
-| `emptyOutDir` | `true`\*   | Empty output directory before bundling |
-| `bundles`     | —          | Named bundles with glob patterns       |
-| `upload`      | —          | Upload destination(s)                  |
+| Option        | Default    | Description                           |
+| ------------- | ---------- | ------------------------------------- |
+| `outDir`      | `.srcpack` | Output directory for bundles          |
+| `emptyOutDir` | `true`\*   | Empty output directory before writing |
+| `bundles`     | —          | Named bundle definitions              |
+| `upload`      | —          | Upload destination(s)                 |
 
-\*`emptyOutDir` defaults to `true` when `outDir` is inside project root. When `outDir` is outside root, a warning is emitted unless explicitly set. Emptying happens only on a full run, so `npx srcpack web` leaves other bundles in place.
+\*Only the default `.srcpack` is emptied automatically — it's srcpack's directory by convention. Any other `outDir` needs an explicit `emptyOutDir: true`, so `outDir: "src"` can't quietly delete your sources. Emptying also happens only on a full run, so `npx srcpack web` leaves other bundles in place.
 
 ### Bundle Config
 
@@ -75,6 +75,7 @@ Or add to `package.json`:
 // Full options
 {
   include: "src/**/*",
+  linear: { team: "ENG" },             // Linear issues as virtual files
   outfile: "~/Downloads/bundle.txt",   // custom output path
   index: true,                         // include index header (default)
   prompt: "./prompts/review.md"        // prepend from file (or inline text)
@@ -84,6 +85,22 @@ Or add to `package.json`:
 Patterns follow glob syntax. Prefix with `!` to exclude, `+` to force-include (bypasses `.gitignore`). Binary files are excluded.
 
 A pattern can also name a set of changed files: `git:staged`, `git:unstaged`, `git:untracked`, `git:dirty`, or `git:<rev>` (e.g. `git:main`, `git:HEAD~3`). Deleted files are skipped, and `git:<rev>` compares against the merge base so a stale branch still reports only your own changes. See [Git sources](https://kriasoft.com/srcpack/configuration#git-sources-git-prefix).
+
+### Linear Issues
+
+A bundle can include [Linear](https://linear.app) issues next to your code. Each issue becomes a virtual file at `linear/issues/ENG-123.md`, so it gets its own index entry and line range — letting you ask whether `[4] src/board.ts` actually implements `[2] ENG-123`.
+
+```typescript
+bundles: {
+  backlog: { linear: "ENG" },                       // non-terminal issues, team ENG
+  planning: {
+    include: ["docs/**/*.md"],
+    linear: { team: "ENG", project: "Roadmap" },    // scoped to one project
+  },
+}
+```
+
+Authentication reads `LINEAR_API_KEY` from the environment (Linear → Settings → Security & access → Personal API keys), never from the config file. `team` is required, completed/canceled/duplicate issues are excluded by default, and issues obey `!` exclusions like any other entry. See [Linear issues](https://kriasoft.com/srcpack/configuration#linear-issues).
 
 ### Google Drive Upload
 
@@ -141,7 +158,7 @@ npx srcpack --staged        # Bundle staged changes (no config needed)
 npx srcpack --dirty         # Bundle staged + unstaged + untracked
 npx srcpack --since main    # Bundle changes since main
 npx srcpack --dry-run       # Preview without writing files
-npx srcpack --emptyOutDir   # Empty output directory before bundling
+npx srcpack --emptyOutDir   # Empty output directory before writing
 npx srcpack --no-emptyOutDir # Keep existing files in output directory
 npx srcpack --no-upload     # Bundle only, skip upload
 npx srcpack init            # Interactive config setup

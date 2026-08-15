@@ -1,15 +1,34 @@
 // SPDX-License-Identifier: MIT
 
-import { lstat, open, readFile } from "node:fs/promises";
-import { isAbsolute, join, resolve, sep } from "node:path";
 import { glob } from "fast-glob";
-import picomatch from "picomatch";
 import ignore, { type Ignore } from "ignore";
-import { ConfigError, expandPath, type BundleConfigInput } from "./config.ts";
+import { lstat, open, readFile } from "node:fs/promises";
+import { dirname, isAbsolute, join, resolve, sep } from "node:path";
+import picomatch from "picomatch";
+import {
+  ConfigError,
+  expandPath,
+  type BundleConfigInput,
+  type LinearSourceInput,
+} from "./config.ts";
 import { isGitSource, resolveGitSource } from "./git.ts";
+import { resolveLinearSource } from "./linear.ts";
 
 // Binary file detection: check first 8KB for null bytes (same heuristic as git)
 const BINARY_CHECK_SIZE = 8192;
+
+/**
+ * Shared glob options. `followSymbolicLinks: false` is the load-bearing one:
+ * fast-glob defaults to true, so a link like `vendor -> ../../elsewhere` would
+ * be walked and every regular file under it bundled. Rejecting symlinks at the
+ * final component (see {@link isBundleable}) can't catch that — the leaf is an
+ * ordinary file; the escape happened in a directory along the way.
+ */
+const GLOB_OPTIONS = {
+  onlyFiles: true,
+  dot: true,
+  followSymbolicLinks: false,
+} as const;
 
 /**
  * Whether a path can be read into a bundle: an existing regular text file.
@@ -46,16 +65,29 @@ async function isBundleable(filePath: string): Promise<boolean> {
   }
 }
 
-export interface FileEntry {
-  path: string; // Relative path from cwd
-  lines: number; // Line count in source file
+/**
+ * One bundle member, before its content is laid out.
+ *
+ * `content` present means the entry is virtual — produced by a non-filesystem
+ * source such as Linear — and its `path` is synthetic. Absent means an ordinary
+ * file, read from disk at bundle time.
+ */
+export interface Entry {
+  path: string;
+  content?: string;
+}
+
+/** One line of the bundle index — a file or a virtual entry, once laid out. */
+export interface IndexEntry {
+  path: string; // Relative path from cwd, or a synthetic path
+  lines: number; // Line count in the entry's content
   startLine: number; // Start line in bundle (1-indexed)
   endLine: number; // End line in bundle
 }
 
 export interface BundleResult {
   content: string;
-  index: FileEntry[];
+  index: IndexEntry[];
 }
 
 /**
@@ -88,6 +120,9 @@ function normalizePatterns(config: BundleConfigInput): {
     patterns = [config];
   } else if (Array.isArray(config)) {
     patterns = config;
+  } else if (config.include === undefined) {
+    // A `linear`-only bundle has no patterns at all
+    patterns = [];
   } else {
     patterns = Array.isArray(config.include)
       ? config.include
@@ -156,25 +191,29 @@ function gitignoreToGlobPatterns(lines: string[]): string[] {
     // Skip empty lines and comments
     if (!trimmed || trimmed.startsWith("#")) continue;
 
+    // A trailing slash only says "directory", which is what this prunes anyway.
+    // Stripping it first matters: `node_modules/` is the common spelling, and
+    // testing for "/" before stripping rejected every one of them.
+    const name = trimmed.endsWith("/") ? trimmed.slice(0, -1) : trimmed;
+
     // Skip patterns with special gitignore features we can't safely convert:
     // - Root-anchored (starts with /)
     // - Contains globs (*, ?, [)
     // - Contains path separators (complex paths)
     // - Escaped characters
     if (
-      trimmed.startsWith("/") ||
-      trimmed.includes("*") ||
-      trimmed.includes("?") ||
-      trimmed.includes("[") ||
-      trimmed.includes("/") ||
-      trimmed.includes("\\")
+      name.startsWith("/") ||
+      name.includes("*") ||
+      name.includes("?") ||
+      name.includes("[") ||
+      name.includes("/") ||
+      name.includes("\\")
     ) {
       continue;
     }
 
     // Only convert simple directory names (e.g., "node_modules", "dist")
     // These are safe to prune at any depth
-    const name = trimmed.endsWith("/") ? trimmed.slice(0, -1) : trimmed;
     if (name && /^[\w.-]+$/.test(name)) {
       patterns.push(`**/${name}/**`);
     }
@@ -184,28 +223,98 @@ function gitignoreToGlobPatterns(lines: string[]): string[] {
 }
 
 interface GitignoreResult {
-  ignore: Ignore;
+  /** Whether git would ignore this cwd-relative posix path. */
+  ignores: (path: string) => boolean;
   globPatterns: string[];
 }
 
+/** One directory's ignore rules. `dir` is a cwd-relative prefix, "" for root. */
+interface IgnoreLayer {
+  dir: string;
+  ig: Ignore;
+}
+
 /**
- * Load and parse .gitignore file from a directory.
- * Returns both an Ignore instance for filtering and glob patterns for fast-glob.
+ * Read an ignore file. Only a missing file means "no rules" — a permission or
+ * I/O error would otherwise widen the bundle to exactly the files someone chose
+ * to hide, so it fails the run instead.
+ */
+async function readIgnoreFile(path: string): Promise<string | null> {
+  try {
+    return await readFile(path, "utf-8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw new ConfigError(
+      `Cannot read "${path}": ${(error as Error).message}. ` +
+        "srcpack stops rather than bundle files it cannot confirm are ignored.",
+    );
+  }
+}
+
+/**
+ * Load the .gitignore rules that apply anywhere under `cwd`.
+ *
+ * Git resolves ignores per directory: a path is governed by the ignore file in
+ * its own directory and in every parent, deepest rule winning. Reading only the
+ * root file bundles whatever a nested .gitignore hides — `packages/app/.env` in
+ * a monorepo being the case that matters, since ignored secrets staying out is
+ * a documented guarantee rather than a convenience.
  */
 async function loadGitignore(cwd: string): Promise<GitignoreResult> {
-  const ig = ignore();
-  const gitignorePath = join(cwd, ".gitignore");
-  let globPatterns: string[] = [];
+  const rootContent = await readIgnoreFile(join(cwd, ".gitignore"));
+  const globPatterns = rootContent
+    ? gitignoreToGlobPatterns(rootContent.split("\n"))
+    : [];
 
-  try {
-    const content = await readFile(gitignorePath, "utf-8");
-    ig.add(content);
-    globPatterns = gitignoreToGlobPatterns(content.split("\n"));
-  } catch {
-    // No .gitignore file, return empty ignore instance
+  const layers: IgnoreLayer[] = [];
+  if (rootContent) layers.push({ dir: "", ig: ignore().add(rootContent) });
+
+  // Pruned by the root file's directory patterns: no point walking node_modules
+  // to collect ignore files that only govern paths already ignored.
+  const nested = await glob(["**/.gitignore"], {
+    cwd,
+    dot: true,
+    onlyFiles: true,
+    followSymbolicLinks: false,
+    ignore: globPatterns,
+  });
+
+  for (const file of nested) {
+    const content = await readIgnoreFile(join(cwd, file));
+    if (content) layers.push({ dir: dirname(file), ig: ignore().add(content) });
   }
 
-  return { ignore: ig, globPatterns };
+  return { ignores: makeIgnores(layers), globPatterns };
+}
+
+/** Resolve the layered rules for one path, deepest directory first. */
+function makeIgnores(layers: IgnoreLayer[]): (path: string) => boolean {
+  if (layers.length === 0) return () => false;
+  const ordered = [...layers].sort((a, b) => b.dir.length - a.dir.length);
+
+  // First layer with an opinion wins; an explicit negation (`!keep.env`) is an
+  // opinion too, which is what lets a nested file re-include what its parent hid.
+  const opinion = (path: string): boolean | undefined => {
+    for (const { dir, ig } of ordered) {
+      if (dir && !path.startsWith(`${dir}/`)) continue;
+      const relative = dir ? path.slice(dir.length + 1) : path;
+      if (!relative || relative === "/") continue;
+      const { ignored, unignored } = ig.test(relative);
+      if (ignored) return true;
+      if (unignored) return false;
+    }
+    return undefined;
+  };
+
+  return (path: string) => {
+    // Ancestors first: git never descends into an ignored directory, so nothing
+    // beneath one can be negated back in.
+    const segments = path.split("/");
+    for (let i = 1; i < segments.length; i++) {
+      if (opinion(`${segments.slice(0, i).join("/")}/`)) return true;
+    }
+    return opinion(path) === true;
+  };
 }
 
 /**
@@ -222,13 +331,39 @@ function isExternalPattern(pattern: string): boolean {
 }
 
 /**
+ * The key two paths are compared by: canonical spelling, then case folded, on
+ * every platform. A case-insensitive filesystem — the default on macOS and
+ * Windows — treats `Context.txt` and `context.txt` as one directory entry, and
+ * APFS additionally folds Unicode normalisation, so `Café.txt` written as
+ * precomposed U+00E9 and as `e` plus U+0301 is also one entry. Normalising
+ * before folding is what makes the comparison sound: equal inputs stay equal
+ * afterwards whether or not case folding preserves normalisation. `realpath`
+ * resolves
+ * an existing component to its on-disk spelling, but that doesn't cover these:
+ * an output not yet written has no on-disk spelling, and the destination entry
+ * is deliberately left unresolved so `rename` replaces a symlink rather than
+ * following it. A config that works in Linux CI and loses a bundle on the
+ * author's laptop is worse than one rejected everywhere, so the rule is the
+ * same on every platform rather than keyed to the filesystem under it.
+ *
+ * Comparison only. Paths used for I/O keep their original spelling, and
+ * ownership stays an exact match: folding there could only widen what srcpack
+ * deletes, which is the one direction that must never be widened by a guess.
+ */
+export function pathKey(path: string): string {
+  return path.normalize("NFC").toLowerCase();
+}
+
+/**
  * Whether a path is one srcpack writes. `outputs` holds absolute paths of
  * files or directories; a directory covers everything beneath it.
  */
 function isOwnOutput(filePath: string, outputs: string[]): boolean {
-  return outputs.some(
-    (out) => filePath === out || filePath.startsWith(out + sep),
-  );
+  const key = pathKey(filePath);
+  return outputs.some((out) => {
+    const outKey = pathKey(out);
+    return key === outKey || key.startsWith(outKey + sep);
+  });
 }
 
 /**
@@ -280,31 +415,84 @@ export async function resolvePatterns(
   // Internal patterns (within cwd): respect .gitignore
   const internalPatterns = globs.filter((p) => !isExternalPattern(p));
   if (internalPatterns.length > 0) {
-    const { ignore: gitignore, globPatterns } = await loadGitignore(cwd);
+    const { ignores, globPatterns } = await loadGitignore(cwd);
     const matches = await glob(internalPatterns, {
+      ...GLOB_OPTIONS,
       cwd,
-      onlyFiles: true,
-      dot: true,
       ignore: globPatterns,
     });
-    await add(matches.filter((m) => !gitignore.ignores(m)));
+    await add(matches.filter((m) => !ignores(m)));
   }
 
   // External patterns: skip .gitignore (it doesn't apply outside cwd)
   const externalPatterns = globs.filter(isExternalPattern);
   if (externalPatterns.length > 0) {
-    await add(
-      await glob(externalPatterns, { cwd, onlyFiles: true, dot: true }),
-    );
+    await add(await glob(externalPatterns, { ...GLOB_OPTIONS, cwd }));
   }
 
   // Force includes: bypass .gitignore (no ignore patterns passed to glob)
   if (force.length > 0) {
-    await add(await glob(force, { cwd, onlyFiles: true, dot: true }));
+    await add(await glob(force, { ...GLOB_OPTIONS, cwd }));
   }
 
   // Sort for deterministic output
   return [...files].sort();
+}
+
+/** Read the `linear` source off a bundle config, if it declares one. */
+function getLinear(config: BundleConfigInput): LinearSourceInput | undefined {
+  if (typeof config === "object" && !Array.isArray(config)) {
+    return config.linear;
+  }
+  return undefined;
+}
+
+/**
+ * Resolve every source a bundle declares into a sorted entry list.
+ *
+ * Filesystem and `git:` sources produce paths ({@link resolvePatterns}, which
+ * never touches the network); `linear` produces virtual entries carrying their
+ * own content. Both then meet the same rules — `!` exclusions apply uniformly,
+ * and the result is sorted by path so bundles stay deterministic.
+ */
+export async function resolveEntries(
+  config: BundleConfigInput,
+  cwd: string,
+  outputs: string[] = [],
+): Promise<Entry[]> {
+  const linearSource = getLinear(config);
+
+  // Sequential, not parallel: a bad pattern should fail before spending a
+  // network round trip, and a failed fetch shouldn't race a filesystem walk.
+  const paths = await resolvePatterns(config, cwd, outputs);
+  const entries: Entry[] = paths.map((path) => ({ path }));
+
+  if (linearSource) {
+    const { exclude } = normalizePatterns(config);
+    const excludeMatchers = exclude.map((p) => picomatch(p));
+    // Compare resolved paths, not the strings: an absolute pattern and a
+    // relative one name the same file with different spellings, and only the
+    // resolved form tells whether a real file occupies a synthetic path.
+    const taken = new Set(paths.map((path) => resolve(cwd, path)));
+
+    for (const entry of await resolveLinearSource(linearSource)) {
+      if (isExcluded(entry.path, excludeMatchers)) continue;
+      // `linear/issues/` is a reserved namespace once a bundle pulls issues:
+      // a real file there would put two entries in the index under one name,
+      // and an `!` exclusion can't drop one without dropping both.
+      if (taken.has(resolve(cwd, entry.path))) {
+        throw new ConfigError(
+          `Linear issue collides with the file "${entry.path}". ` +
+            "Rename the file, or narrow the include patterns so it isn't matched.",
+        );
+      }
+      entries.push(entry);
+    }
+  }
+
+  return entries.sort((a, b) =>
+    a.path < b.path ? -1 : a.path > b.path ? 1 : 0,
+  );
 }
 
 /**
@@ -324,7 +512,7 @@ function countLines(content: string): number {
  * - ASCII-only characters for broad compatibility
  * - Line locations that point to actual file content
  */
-export function formatIndex(index: FileEntry[]): string {
+export function formatIndex(index: IndexEntry[]): string {
   if (index.length === 0) return "# Index\n# (empty)";
 
   const count = index.length;
@@ -355,43 +543,46 @@ function formatSeparator(index: number, filePath: string): string {
 }
 
 /**
- * Create a bundle from a list of files.
+ * Create a bundle from a list of entries.
  * Line numbers in the index point to the first line of actual file content,
  * not to the separator line.
  */
 export async function createBundle(
-  files: string[],
+  entries: Entry[],
   cwd: string,
   options: BundleOptions = {},
 ): Promise<BundleResult> {
   const { includeIndex = true } = options;
   // Normalize prompt: trim and treat whitespace-only as no prompt
   const prompt = options.prompt?.trim() || undefined;
-  const index: FileEntry[] = [];
+  const index: IndexEntry[] = [];
   const contentParts: string[] = [];
   let currentLine = 1;
 
-  for (let i = 0; i < files.length; i++) {
-    const filePath = files[i]!;
-    const content = await readFile(resolve(cwd, filePath), "utf-8");
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i]!;
+    const filePath = entry.path;
+    // Virtual entries carry their content; files are read from disk
+    const content =
+      entry.content ?? (await readFile(resolve(cwd, filePath), "utf-8"));
     const lines = countLines(content);
 
     // Separator takes 1 line, then content starts on next line
     const contentStartLine = currentLine + 1;
 
-    const entry: FileEntry = {
+    const indexEntry: IndexEntry = {
       path: filePath,
       lines,
       startLine: contentStartLine,
       endLine: contentStartLine + Math.max(0, lines - 1),
     };
-    index.push(entry);
+    index.push(indexEntry);
 
     contentParts.push(formatSeparator(i + 1, filePath));
     contentParts.push(content.endsWith("\n") ? content.slice(0, -1) : content);
 
     // Next separator line = after content
-    currentLine = entry.endLine + 1;
+    currentLine = indexEntry.endLine + 1;
   }
 
   // Calculate prompt offset (prompt text + blank + "---" + blank)
@@ -494,8 +685,8 @@ export async function bundleOne(
   cwd: string,
   outputs: string[] = [],
 ): Promise<BundleResult> {
-  const files = await resolvePatterns(config, cwd, outputs);
+  const entries = await resolveEntries(config, cwd, outputs);
   const includeIndex = getIncludeIndex(config);
   const prompt = await resolvePrompt(getPrompt(config), cwd);
-  return createBundle(files, cwd, { includeIndex, prompt });
+  return createBundle(entries, cwd, { includeIndex, prompt });
 }

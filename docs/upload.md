@@ -87,9 +87,14 @@ This opens a browser window to authorize access. Tokens are stored locally and r
 Once configured, `npx srcpack` uploads bundles after bundling:
 
 ```
-✓ web  →  .srcpack/web.txt  (24 files, 8.2 KB)
-✓ api  →  .srcpack/api.txt  (18 files, 5.1 KB)
-↑ Uploaded to Google Drive
+  web  24 files  842 lines  → .srcpack/web.txt
+  api  18 files  511 lines  → .srcpack/api.txt
+
+Bundled: 2 bundles, 42 files, 1,353 lines
+
+Uploaded: 2 files to Google Drive
+  web.txt → https://drive.google.com/file/d/...
+  api.txt → https://drive.google.com/file/d/...
 ```
 
 ### Exclude Bundles
@@ -105,7 +110,10 @@ upload: {
 }
 ```
 
-This is useful for local-only bundles that shouldn't be shared.
+This is useful for local-only bundles that shouldn't be shared — a bundle of
+[Linear issues](./configuration.md#linear-issues), say. Names are checked
+against your configured bundles, so a typo fails the run instead of quietly
+uploading what it was meant to hold back.
 
 ### Skip Upload
 

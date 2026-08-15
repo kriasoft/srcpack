@@ -31,3 +31,4 @@ coverage
 
 /srcpack.config.ts
 /.srcpack/
+tmp/

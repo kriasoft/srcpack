@@ -167,15 +167,20 @@ Opens a browser to authorize access. Tokens are stored in `~/.config/srcpack/cre
 
 ## Options
 
-| Option          | Description                                    |
-| --------------- | ---------------------------------------------- |
-| `--staged`      | Bundle staged changes only                     |
-| `--dirty`       | Bundle staged, unstaged, and untracked changes |
-| `--since <rev>` | Bundle changes since `<rev>`                   |
-| `--dry-run`     | Preview bundles without writing files          |
-| `--no-upload`   | Bundle only, skip upload                       |
-| `--help`        | Show help                                      |
-| `--version`     | Show version                                   |
+| Option             | Description                                    |
+| ------------------ | ---------------------------------------------- |
+| `--staged`         | Bundle staged changes only                     |
+| `--dirty`          | Bundle staged, unstaged, and untracked changes |
+| `--since <rev>`    | Bundle changes since `<rev>`                   |
+| `--dry-run`        | Preview bundles without writing files          |
+| `--emptyOutDir`    | Empty the output directory before writing      |
+| `--no-emptyOutDir` | Keep what is already in the output directory   |
+| `--no-upload`      | Bundle only, skip upload                       |
+| `--help`           | Show help                                      |
+| `--version`        | Show version                                   |
+
+An unrecognized option is an error, not a no-op — `--no-uplaod` would otherwise
+upload, and `--dry-rnu` would write.
 
 ## Examples
 
@@ -204,9 +209,20 @@ yarn dlx srcpack --dry-run
 Output:
 
 ```
-[dry-run] web  →  .srcpack/web.txt  (24 files, 8.2 KB)
-[dry-run] api  →  .srcpack/api.txt  (18 files, 5.1 KB)
+  web   3 files  842 lines
+    src/api/routes.ts
+    src/index.ts
+    src/utils/helpers.ts
+  docs  1 file    96 lines
+    README.md
+
+Dry run: 2 bundles, 4 files, 938 lines
 ```
+
+Each bundle lists the files it would contain, so you can check the shape of a
+pattern before anything is written; `outDir` is left alone too. A bundle that
+declares [`linear`](./configuration.md#linear-issues) still calls the API — the
+counts are what it would produce right now, which it can't know offline.
 
 ### Bundle without upload
 
