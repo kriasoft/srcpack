@@ -38,6 +38,7 @@ import {
 import { GitError } from "./git.ts";
 import { runInit } from "./init.ts";
 import { LinearError } from "./linear.ts";
+import { selectBundles } from "./plan.ts";
 
 interface BundleOutput {
   name: string;
@@ -317,21 +318,16 @@ Options:
 
   const bundles = adHoc ? { [adHoc.name]: adHoc.patterns } : config.bundles;
 
-  // Determine which bundles to process
-  const bundleNames = requestedBundles.length
-    ? requestedBundles
-    : Object.keys(bundles);
+  const { names: bundleNames, skipped } = selectBundles(
+    bundles,
+    requestedBundles,
+  );
+  const onDemandNote = skipped.length
+    ? `On demand: ${skipped.join(", ")}`
+    : undefined;
 
-  // Validate requested bundle names exist
-  for (const name of bundleNames) {
-    // hasOwn, not `in`: `srcpack toString` would otherwise find Object.prototype
-    if (!Object.hasOwn(bundles, name)) {
-      console.error(`Unknown bundle: ${name}`);
-      process.exit(1);
-    }
-  }
-
-  if (bundleNames.length === 0) {
+  // Every bundle on demand is still a full run: it goes on to empty outDir
+  if (bundleNames.length === 0 && !onDemandNote) {
     console.log("No bundles configured.");
     return;
   }
@@ -424,7 +420,7 @@ Options:
 
   // Process all bundles with progress
   const bundleSpinner = ora({
-    text: `Bundling ${bundleNames[0]}...`,
+    text: "Bundling...",
     color: "cyan",
   }).start();
 
@@ -464,6 +460,11 @@ Options:
   // srcpack's own output from being bundled.
   if (emptyOutDir && !dryRun && requestedBundles.length === 0) {
     await emptyDirectory(outDirPath, [".git"]);
+  }
+
+  if (outputs.length === 0) {
+    console.log(onDemandNote);
+    return;
   }
 
   // Calculate column widths for aligned output
@@ -524,10 +525,12 @@ Options:
     console.log(
       `Dry run: ${outputs.length} ${bundleWord}, ${formatNumber(totalFiles)} ${fileWord}, ${formatNumber(totalLines)} ${lineWord}`,
     );
+    if (onDemandNote) console.log(onDemandNote);
   } else {
     console.log(
       `Bundled: ${outputs.length} ${bundleWord}, ${formatNumber(totalFiles)} ${fileWord}, ${formatNumber(totalLines)} ${lineWord}`,
     );
+    if (onDemandNote) console.log(onDemandNote);
 
     // Ad-hoc bundles stay local: uploading work-in-progress to Drive is not
     // what --staged asks for, and `upload.exclude` can't name a bundle the

@@ -111,6 +111,13 @@ const BundleConfigSchema = z.union([
       index: z.boolean().default(true),
       /** Text to prepend to bundle (e.g., review instructions for LLMs). */
       prompt: z.string().optional(),
+      /**
+       * Skipped by a full run, built when named: `srcpack <name>`. For bundles
+       * too slow, remote or situational to rebuild every time. A full run still
+       * empties `outDir`, removing their output — preserving it would make
+       * emptying a growing list of exceptions (ADR 005).
+       */
+      onDemand: z.boolean().optional(),
     })
     .refine((bundle) => bundle.include || bundle.linear, {
       message: 'Bundle needs a source: "include" patterns, "linear", or both',

@@ -94,6 +94,8 @@ yarn dlx srcpack web api
 
 :::
 
+Naming a bundle builds it even when it is marked [`onDemand`](./configuration.md#on-demand-bundles); a full run skips those and lists them after the summary.
+
 **Changed files only:**
 
 ```sh

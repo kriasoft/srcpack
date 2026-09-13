@@ -658,6 +658,54 @@ describe("cli", () => {
       );
     });
 
+    test("should skip on-demand bundles unless named", async () => {
+      await mkdir(join(project, "src"), { recursive: true });
+      await writeFile(join(project, "src/index.ts"), "export const x = 1;\n");
+      await writeFile(
+        join(project, "srcpack.config.ts"),
+        `export default { bundles: {
+           code: "src/**/*",
+           slow: { include: "src/**/*", onDemand: true },
+         } };`,
+      );
+
+      const full = await runCli([], { cwd: project });
+
+      expect(full.exitCode).toBe(0);
+      expect(full.stdout).toContain("Bundled: 1 bundle,");
+      expect(full.stdout).toContain("On demand: slow");
+      expect(await Bun.file(join(project, ".srcpack/slow.txt")).exists()).toBe(
+        false,
+      );
+
+      const named = await runCli(["slow"], { cwd: project });
+
+      expect(named.exitCode).toBe(0);
+      expect(named.stdout).not.toContain("On demand:");
+      expect(await Bun.file(join(project, ".srcpack/slow.txt")).exists()).toBe(
+        true,
+      );
+    });
+
+    test("should still empty outDir when every bundle is on demand", async () => {
+      await mkdir(project, { recursive: true });
+      await writeFile(join(project, "a.md"), "# a\n");
+      await writeFile(
+        join(project, "srcpack.config.ts"),
+        `export default { bundles: { slow: { include: "*.md", onDemand: true } } };`,
+      );
+      const output = join(project, ".srcpack/slow.txt");
+      await runCli(["slow"], { cwd: project });
+      expect(await Bun.file(output).exists()).toBe(true);
+
+      const result = await runCli([], { cwd: project });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.trim()).toBe("On demand: slow");
+      // A full run rebuilds .srcpack, however few bundles it builds
+      expect(await Bun.file(output).exists()).toBe(false);
+    });
+
     test("should not bundle a previous run's output", async () => {
       await mkdir(join(project, "src"), { recursive: true });
       await writeFile(join(project, "src/index.ts"), "export const x = 1;\n");

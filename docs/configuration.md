@@ -128,10 +128,30 @@ bundles: {
 | `outfile` | `string` | `{outDir}/{name}.txt` | Custom output path |
 | `index` | `boolean` | `true` | Include index header |
 | `prompt` | `string` | — | Text or file path (`./`, `~/`) to prepend |
+| `onDemand` | `boolean` | `false` | Build only when named (see below) |
 
 A bundle needs at least one source: `include`, `linear`, or both.
 
 Two bundles may not write to the same file. Names that differ only by case, or only in Unicode normalisation, count as the same file everywhere: on a case-insensitive filesystem — the default on macOS and Windows — `Web.txt` and `web.txt` are one directory entry, and APFS treats the two spellings of `Café` the same way, so one bundle would silently overwrite the other.
+
+### On-Demand Bundles
+
+A bundle that is slow, remote, or only occasionally useful can opt out of full runs:
+
+```ts
+bundles: {
+  code: "src/**/*",
+  backlog: { linear: "ENG", onDemand: true },
+}
+```
+
+| Command           | Builds                                    |
+| ----------------- | ----------------------------------------- |
+| `srcpack`         | every bundle without `onDemand: true`     |
+| `srcpack backlog` | `backlog`, on demand or not               |
+| `--dry-run`       | the same selection as the run it previews |
+
+A full run lists what it skipped (`On demand: backlog`). It still empties `outDir`, which removes an on-demand bundle's previous output — run `srcpack`, then `srcpack backlog`.
 
 ## Pattern Syntax
 
