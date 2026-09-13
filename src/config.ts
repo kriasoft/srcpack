@@ -93,9 +93,8 @@ const HttpUrlSchema = z.string().superRefine((value, ctx) => {
 });
 
 /**
- * A rendered page as a bundle source. It writes numbered PNGs beside the text
- * output (`<outDir>/<name>-00.png`, …) rather than entries in it, which is why
- * it is its own key and not a provider shared with `include` and `linear`.
+ * A rendered page as numbered PNGs in `outDir`, independent of the text
+ * output path. See ADR 006 for why it is a separate source key.
  *
  * @example
  * ```ts
@@ -146,13 +145,13 @@ const BundleConfigSchema = z.union([
       include: PatternsSchema.optional(),
       /** Linear issues to include in the bundle. */
       linear: LinearSourceSchema.optional(),
-      /** Page to capture as numbered PNGs beside the text output. */
+      /** Page to capture as numbered PNGs in `outDir`. */
       screenshot: ScreenshotSourceSchema.optional(),
       /** Custom output file path. Defaults to `<outDir>/<bundleName>.txt`. */
       outfile: z.string().min(1).optional(),
       /**
        * Include file index header in output. Defaults to true — read as
-       * `index ?? true`, not defaulted here, so a set value is distinguishable.
+       * `index ?? true`, so screenshot-only bundles can reject an explicit value.
        */
       index: z.boolean().optional(),
       /** Text to prepend to bundle (e.g., review instructions for LLMs). */

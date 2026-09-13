@@ -131,7 +131,7 @@ bundles: {
 | `prompt` | `string` | — | Text or file path (`./`, `~/`) to prepend |
 | `onDemand` | `boolean` | `false` | Build only when named (see below) |
 
-A bundle needs at least one source: `include`, `linear`, `screenshot`, or any combination.
+A bundle needs at least one source: `include`, `linear`, `screenshot`, or any combination. `outfile`, `index` and `prompt` apply only to text and require `include` or `linear`. Images always go to `outDir`.
 
 Two bundles may not write to the same file. Names that differ only by case, or only in Unicode normalisation, count as the same file everywhere: on a case-insensitive filesystem — the default on macOS and Windows — `Web.txt` and `web.txt` are one directory entry, and APFS treats the two spellings of `Café` the same way, so one bundle would silently overwrite the other.
 
@@ -152,7 +152,7 @@ bundles: {
 | `srcpack backlog` | `backlog`, on demand or not               |
 | `--dry-run`       | the same selection as the run it previews |
 
-A full run lists what it skipped (`On demand: backlog`). A full run that empties `outDir` (by default, only `.srcpack` is emptied) removes an on-demand bundle's previous output there — run `srcpack`, then `srcpack backlog`.
+A full run lists what it skipped (`On demand: backlog`). If every bundle is on demand, it writes no bundles and exits successfully; the same emptying rules still apply. A full run that empties `outDir` (by default, only `.srcpack` is emptied) removes an on-demand bundle's previous output there — run `srcpack`, then `srcpack backlog`.
 
 ## Pattern Syntax
 
@@ -396,16 +396,15 @@ The string form `screenshot: "http://…"` is shorthand for `{ url: "http://…"
 
 ### Notes
 
-- **The page is scrolled before capture**, so lazy images and content that appears on scroll are rendered. Sections that grow as they load are followed down, and at the bottom srcpack waits for requests to finish and keeps scrolling if they added content. It stops after 50 viewports or 15 seconds and warns that content further down may not have loaded.
-- **Framework dev toolbars are hidden** automatically (Astro, Nuxt). Next.js is left alone: its `nextjs-portal` also shows build and runtime errors, which a review should see. Add `"nextjs-portal"` to `hide` if you want it gone, and cookie banners and chat widgets too. Hiding happens in the capture's own stylesheet; the page itself isn't changed.
-- **A page that doesn't load fails the run**: an unreachable URL, a non-2xx status, or no response within 30 seconds. A screenshot of a 404 page would look like success. The previous run's images are left untouched.
+- **The page is scrolled before capture**, so lazy images and content that appears on scroll are rendered. Sections that grow as they load are followed down, and at the bottom srcpack waits for 500 ms of network quiet, capped at 5 seconds per wait, and keeps scrolling if requests added content. It stops after 50 viewports or 15 seconds and warns that content further down may not have loaded.
+- **Framework dev toolbars are hidden** automatically (Astro, Nuxt). Next.js is left alone: its `nextjs-portal` also shows build and runtime errors, which a review should see. Use `hide` to suppress `"nextjs-portal"` or selectors for cookie banners and chat widgets. Hiding happens in the capture's own stylesheet; the page itself isn't changed.
+- **A page that doesn't load fails the run**: an unreachable URL, a non-2xx status, or navigation that does not finish loading within 30 seconds. A screenshot of a 404 page would look like success. The previous run's images are left untouched.
 - **Stale images are removed.** When a page shrinks from six images to four, `-04` and `-05` are deleted, so an old slice is never attached with the new set.
-- **Images are written to `outDir`**; there is no `outfile` for them. `prompt`, `index` and `outfile` describe the text file, so they need `include` or `linear` alongside `screenshot`.
 - **The URL needs a scheme** in config: `"localhost:5173"` is an error. (`--screenshot` on the command line adds `http://` for you.)
 - **Images stay local.** A configured upload skips them and says so; a mixed bundle's text file still uploads.
 - **`--dry-run` doesn't open the page.** It lists the URL, viewport and destination; how many images a page produces is only known after rendering it.
 - **A page without `<meta name="viewport">`** lays out 980 CSS pixels wide under `mobile`, as it would on a real phone. If a mobile capture looks like the desktop site, that's why.
-- **Two bundles whose names differ only by case** would write one set of files on macOS and Windows, so `Web` and `web` screenshot bundles are rejected everywhere, as is an `outfile` named like another bundle's image.
+- **Output collisions are rejected**, including screenshot bundle names that differ only by case and a text `outfile` that lands in `outDir` under any bundle's numbered image name, even its own. Checks cover all configured bundles, including those skipped by this run.
 - **Virtualized lists and content that disappears once scrolled past** may be missing: the page is scrolled to load content, then captured from the top.
 - **A page that scrolls inside its own container** (the window never scrolls) is captured as a single viewport.
 - **Pages behind a login aren't supported yet.**

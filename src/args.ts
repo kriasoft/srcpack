@@ -12,9 +12,7 @@ export class UsageError extends Error {
 }
 
 /**
- * One-off bundle from a `git:` source or a URL instead of a configured one.
- * Needs no config file — reviewing what you just wrote, or how a page looks on
- * a phone, is throwaway and not worth committing.
+ * One-off bundle from a `git:` source or a URL; no config file required.
  */
 export interface AdHocBundle {
   name: string;

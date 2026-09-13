@@ -10,7 +10,7 @@ Zero-config CLI for bundling code into LLM-optimized context files.
 
 ```bash
 npx srcpack init         # Create config interactively
-npx srcpack              # Bundle all
+npx srcpack              # Bundle all except on-demand
 ```
 
 ## Why
@@ -90,6 +90,8 @@ Patterns follow glob syntax. Prefix with `!` to exclude, `+` to force-include (b
 
 A pattern can also name a set of changed files: `git:staged`, `git:unstaged`, `git:untracked`, `git:dirty`, or `git:<rev>` (e.g. `git:main`, `git:HEAD~3`). Deleted files are skipped, and `git:<rev>` compares against the merge base so a stale branch still reports only your own changes. See [Git sources](https://kriasoft.com/srcpack/configuration#git-sources-git-prefix).
 
+A full run skips bundles marked `onDemand: true`; name them explicitly to build them. Emptying `outDir` still removes their previous output there. See [On-Demand Bundles](https://kriasoft.com/srcpack/configuration#on-demand-bundles).
+
 ### Linear Issues
 
 A bundle can include [Linear](https://linear.app) issues next to your code. Each issue becomes a virtual file at `linear/issues/ENG-123.md`, so it gets its own index entry and line range — letting you ask whether `[4] src/board.ts` actually implements `[2] ENG-123`.
@@ -108,7 +110,7 @@ Authentication reads `LINEAR_API_KEY` from the environment (Linear → Settings 
 
 ### Screenshots
 
-A bundle can capture a rendered page as images a vision model can actually read: tall pages are split into overlapping slices that survive downscaling, lazy content is scrolled into view first, and dev toolbars are hidden.
+A bundle can capture a rendered page as PNGs, with overlapping detail slices for tall pages. Srcpack scrolls to load lazy content before capture and hides Astro and Nuxt dev toolbars.
 
 ```typescript
 bundles: {
@@ -116,7 +118,7 @@ bundles: {
 }
 ```
 
-`npx srcpack home` writes `.srcpack/home-00.png` (the whole page), then `home-01.png`, `home-02.png`, … — drag them into ChatGPT in filename order. For a one-off, no config is needed: `npx srcpack --screenshot localhost:5173 --viewport mobile`. Requires Playwright (`npm install -D playwright`). See [Screenshots](https://kriasoft.com/srcpack/configuration#screenshots).
+`npx srcpack home` writes PNGs to `.srcpack`: `home-00.png` is the whole page when available; tall pages also get `home-01.png`, `home-02.png`, … detail slices. Attach them in filename order. Images stay local, even with upload configured. For a one-off, no config is needed: `npx srcpack --screenshot localhost:5173 --viewport mobile`. See [Screenshots](https://kriasoft.com/srcpack/configuration#screenshots) for Playwright and browser setup.
 
 ### Google Drive Upload
 
@@ -168,7 +170,7 @@ import { utils } from "./utils";
 ## CLI
 
 ```bash
-npx srcpack                 # Bundle all, upload if configured
+npx srcpack                 # Bundle all except on-demand, upload if configured
 npx srcpack web api         # Bundle specific bundles only
 npx srcpack --staged        # Bundle staged changes (no config needed)
 npx srcpack --dirty         # Bundle staged + unstaged + untracked

@@ -171,9 +171,9 @@ export function loadPlaywright(
 }
 
 /**
- * Launch Chromium: Playwright's own build, else the system Chrome. The browser
- * download is where most people give up on this flow, and most developers
- * already have Chrome.
+ * Launch Playwright's Chromium, falling back to system Chrome only when the
+ * executable is missing: the browser download is where this flow loses people,
+ * and most developers already have Chrome. Other launch errors stay visible.
  */
 export async function launchBrowser(
   playwright: Playwright,
@@ -399,7 +399,7 @@ async function open(page: PlaywrightModule.Page, url: string): Promise<void> {
 /**
  * Let a page finish rendering before capture. A full-page screenshot doesn't
  * move the viewport, so lazy images and IntersectionObserver content would
- * stay blank (playwright#40941).
+ * stay blank.
  *
  * Scrolls until the viewport can go no further, re-reading the page each step
  * so sections that load taller than their placeholders are followed. At that

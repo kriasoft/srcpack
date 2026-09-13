@@ -73,7 +73,6 @@ const DEFAULT_OUT_DIR = ".srcpack";
 
 /**
  * Empty a directory while preserving specified entries (e.g., `.git`).
- * Uses `force: true` to handle read-only or in-use files.
  */
 async function emptyDirectory(dir: string, skip: string[] = []): Promise<void> {
   let entries: string[];
@@ -145,7 +144,7 @@ async function main() {
 srcpack - Bundle and upload tool
 
 Usage:
-  npx srcpack                  Bundle all, upload if configured
+  npx srcpack                  Bundle all except on-demand, upload if configured
   npx srcpack web api          Bundle specific bundles only
   npx srcpack --staged         Bundle staged changes (no config needed)
   npx srcpack --screenshot localhost:5173
