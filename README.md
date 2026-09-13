@@ -78,9 +78,11 @@ Or add to `package.json`:
 {
   include: "src/**/*",
   linear: { team: "ENG" },             // Linear issues as virtual files
+  screenshot: "http://localhost:5173", // rendered page as numbered PNGs
   outfile: "~/Downloads/bundle.txt",   // custom output path
   index: true,                         // include index header (default)
-  prompt: "./prompts/review.md"        // prepend from file (or inline text)
+  prompt: "./prompts/review.md",       // prepend from file (or inline text)
+  onDemand: true                       // build only when named
 }
 ```
 
@@ -103,6 +105,18 @@ bundles: {
 ```
 
 Authentication reads `LINEAR_API_KEY` from the environment (Linear → Settings → Security & access → Personal API keys), never from the config file. `team` is required, completed/canceled/duplicate issues are excluded by default, and issues obey `!` exclusions like any other entry. See [Linear issues](https://kriasoft.com/srcpack/configuration#linear-issues).
+
+### Screenshots
+
+A bundle can capture a rendered page as images a vision model can actually read: tall pages are split into overlapping slices that survive downscaling, lazy content is scrolled into view first, and dev toolbars are hidden.
+
+```typescript
+bundles: {
+  home: { screenshot: "http://localhost:5173/", onDemand: true },
+}
+```
+
+`npx srcpack home` writes `.srcpack/home-00.png` (the whole page), then `home-01.png`, `home-02.png`, … — drag them into ChatGPT in filename order. For a one-off, no config is needed: `npx srcpack --screenshot localhost:5173 --viewport mobile`. Requires Playwright (`npm install -D playwright`). See [Screenshots](https://kriasoft.com/srcpack/configuration#screenshots).
 
 ### Google Drive Upload
 
@@ -159,6 +173,7 @@ npx srcpack web api         # Bundle specific bundles only
 npx srcpack --staged        # Bundle staged changes (no config needed)
 npx srcpack --dirty         # Bundle staged + unstaged + untracked
 npx srcpack --since main    # Bundle changes since main
+npx srcpack --screenshot localhost:5173 # Capture a page as PNGs
 npx srcpack --dry-run       # Preview without writing files
 npx srcpack --emptyOutDir   # Empty output directory before writing
 npx srcpack --no-emptyOutDir # Keep existing files in output directory

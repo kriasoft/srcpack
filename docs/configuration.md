@@ -125,12 +125,13 @@ bundles: {
 | --- | --- | --- | --- |
 | `include` | `string \| string[]` | — | Glob pattern(s) |
 | `linear` | `string \| object` | — | Linear issues (see below) |
+| `screenshot` | `string \| object` | — | Page captured as PNGs (see below) |
 | `outfile` | `string` | `{outDir}/{name}.txt` | Custom output path |
 | `index` | `boolean` | `true` | Include index header |
 | `prompt` | `string` | — | Text or file path (`./`, `~/`) to prepend |
 | `onDemand` | `boolean` | `false` | Build only when named (see below) |
 
-A bundle needs at least one source: `include`, `linear`, or both.
+A bundle needs at least one source: `include`, `linear`, `screenshot`, or any combination.
 
 Two bundles may not write to the same file. Names that differ only by case, or only in Unicode normalisation, count as the same file everywhere: on a case-insensitive filesystem — the default on macOS and Windows — `Web.txt` and `web.txt` are one directory entry, and APFS treats the two spellings of `Café` the same way, so one bundle would silently overwrite the other.
 
@@ -301,6 +302,111 @@ Notes:
 - **Issues travel with the bundle.** Issue text is ordinary bundle content, so a configured upload sends it to Google Drive alongside your code. Add the bundle to [`upload.exclude`](#upload-configuration) to keep it local.
 - **`--dry-run` still calls the API**, because it has to in order to answer "what would this produce right now". There is no cache; a run without network access fails. Requests time out after 30 seconds.
 - **`linear/issues/` is reserved** once a bundle pulls issues. A file on disk at that path is an error: two entries would share one name, and an `!` exclusion drops both rather than choosing. Rename the file, or narrow the include patterns so it isn't matched.
+
+## Screenshots
+
+A bundle can capture a rendered page as PNG images a vision model can actually read — on its own, or next to the code that renders it:
+
+```ts
+bundles: {
+  home: { screenshot: "http://localhost:5173/", onDemand: true },
+
+  "home-mobile": {
+    screenshot: {
+      url: "http://localhost:5173/",
+      viewport: "mobile",
+      hide: ["#cookie-banner", ".intercom-launcher"],
+    },
+    onDemand: true,
+  },
+
+  // Implementation and rendered result under one name
+  pricing: {
+    include: "src/pages/pricing/**/*",
+    screenshot: "http://localhost:5173/pricing",
+    prompt: "Review this implementation against the attached screenshots.",
+    onDemand: true,
+  },
+}
+```
+
+```console
+$ srcpack home home-mobile
+  home         4 images  page 1440×6,210  → .srcpack/home-00.png … home-03.png
+  home-mobile  11 images  page 412×9,480  → .srcpack/home-mobile-00.png … home-mobile-10.png
+
+Bundled: 2 bundles, 15 images
+```
+
+Then drag `.srcpack/home-*.png` into ChatGPT, in filename order. A mixed bundle like `pricing` writes its text file and its images, and prints a line for each.
+
+`onDemand: true` keeps a full `srcpack` from failing whenever the dev server isn't running — see [On-Demand Bundles](#on-demand-bundles).
+
+### Setup
+
+Screenshots use [Playwright](https://playwright.dev), which srcpack doesn't install for you — most projects never need a browser:
+
+::: code-group
+
+```sh [npm]
+npm install -D playwright && npx playwright install chromium
+```
+
+```sh [bun]
+bun add -d playwright && bunx playwright install chromium
+```
+
+```sh [pnpm]
+pnpm add -D playwright && pnpm exec playwright install chromium
+```
+
+```sh [yarn]
+yarn add -D playwright && yarn playwright install chromium
+```
+
+:::
+
+A project that already uses Playwright Test needs nothing new. Without Playwright's Chromium, srcpack uses your installed Google Chrome. Playwright 1.41 or a later 1.x is required.
+
+### Filenames
+
+| File                          | Contains                                 |
+| ----------------------------- | ---------------------------------------- |
+| `<name>-00.png`               | The whole page, for layout               |
+| `<name>-01.png`, `-02.png`, … | Overlapping detail slices, top to bottom |
+
+Vision models downscale every image to a fixed pixel budget, so one image of a tall page arrives as a thumbnail. Detail slices are 2,200 device pixels tall and overlap by at least 160, so text cut at one edge is whole in the next. A page that fits in one slice produces only `<name>-00.png`.
+
+The overview is best-effort. If a very tall page can't be captured whole, or its image would exceed the 20 MB upload limit, srcpack warns and writes the detail slices alone, starting at `-01`. Those still cover the whole page.
+
+### Options
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `url` | `string` | — | Required. An `http://` or `https://` URL |
+| `viewport` | `"desktop" \| "mobile"` | `"desktop"` | Viewport preset (below) |
+| `hide` | `string[]` | — | CSS selectors hidden during capture |
+
+The string form `screenshot: "http://…"` is shorthand for `{ url: "http://…" }`.
+
+| Viewport | CSS size | Pixel ratio | Emulation |
+| --- | --- | --- | --- |
+| `desktop` | 1440×900 | 1 | — |
+| `mobile` | 412×839 | 2 | Pixel 7 user agent, touch, mobile layout |
+
+### Notes
+
+- **The page is scrolled before capture**, so lazy images and content that appears on scroll are rendered. Sections that grow as they load are followed down, up to 50 viewports; past that srcpack warns that content further down may not have loaded.
+- **Framework dev toolbars are hidden** automatically (Astro, Next.js, Nuxt). Add cookie banners and chat widgets to `hide`. Hiding happens in the capture's own stylesheet; the page itself isn't changed.
+- **A page that doesn't load fails the run**: an unreachable URL, a non-2xx status, or no response within 30 seconds. A screenshot of a 404 page would look like success. The previous run's images are left untouched.
+- **Stale images are removed.** When a page shrinks from six images to four, `-04` and `-05` are deleted, so an old slice is never attached with the new set.
+- **Images are written to `outDir`**; there is no `outfile` for them. `prompt`, `index` and `outfile` describe the text file, so they need `include` or `linear` alongside `screenshot`.
+- **The URL needs a scheme** in config: `"localhost:5173"` is an error. (`--screenshot` on the command line adds `http://` for you.)
+- **Images stay local.** A configured upload skips them and says so; a mixed bundle's text file still uploads.
+- **`--dry-run` doesn't open the page.** It lists the URL, viewport and destination; how many images a page produces is only known after rendering it.
+- **A page without `<meta name="viewport">`** lays out 980 CSS pixels wide under `mobile`, as it would on a real phone. If a mobile capture looks like the desktop site, that's why.
+- **Two bundles whose names differ only by case** would write one set of files on macOS and Windows, so `Web` and `web` screenshot bundles are rejected everywhere, as is an `outfile` named like another bundle's image.
+- **Pages behind a login aren't supported yet.**
 
 ## Automatic Exclusions
 

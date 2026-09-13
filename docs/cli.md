@@ -110,6 +110,15 @@ Ad-hoc bundles stay local: they are never uploaded, even with Google Drive confi
 
 For a permanent version with review instructions attached, put a [git source](./configuration.md#git-sources-git-prefix) in your config instead.
 
+**A page, as images:**
+
+```sh
+npx srcpack --screenshot localhost:5173/pricing
+npx srcpack --screenshot localhost:5173 --viewport mobile
+```
+
+Captures the page into `.srcpack/screenshot-00.png`, `screenshot-01.png`, … without a config file. A URL without a scheme gets `http://`. Like the change-set flags, it leaves other files in `outDir` alone and never uploads. It needs Playwright — see [Screenshots](./configuration.md#screenshots), which also covers declaring a page you capture repeatedly.
+
 ### `srcpack init`
 
 Create a `srcpack.config.ts` interactively.
@@ -164,17 +173,19 @@ Opens a browser to authorize access. Tokens are stored in `~/.config/srcpack/cre
 
 ## Options
 
-| Option             | Description                                    |
-| ------------------ | ---------------------------------------------- |
-| `--staged`         | Bundle staged changes only                     |
-| `--dirty`          | Bundle staged, unstaged, and untracked changes |
-| `--since <rev>`    | Bundle changes since `<rev>`                   |
-| `--dry-run`        | Preview bundles without writing files          |
-| `--emptyOutDir`    | Empty the output directory before writing      |
-| `--no-emptyOutDir` | Keep what is already in the output directory   |
-| `--no-upload`      | Bundle only, skip upload                       |
-| `-h`, `--help`     | Show help                                      |
-| `-v`, `--version`  | Show version                                   |
+| Option               | Description                                          |
+| -------------------- | ---------------------------------------------------- |
+| `--staged`           | Bundle staged changes only                           |
+| `--dirty`            | Bundle staged, unstaged, and untracked changes       |
+| `--since <rev>`      | Bundle changes since `<rev>`                         |
+| `--screenshot <url>` | Capture a page as numbered PNGs                      |
+| `--viewport <name>`  | `desktop` (default) or `mobile`, with `--screenshot` |
+| `--dry-run`          | Preview bundles without writing files                |
+| `--emptyOutDir`      | Empty the output directory before writing            |
+| `--no-emptyOutDir`   | Keep what is already in the output directory         |
+| `--no-upload`        | Bundle only, skip upload                             |
+| `-h`, `--help`       | Show help                                            |
+| `-v`, `--version`    | Show version                                         |
 
 An unrecognized option is an error, not a no-op — `--no-uplaod` would otherwise upload, and `--dry-rnu` would write. Values may follow a space or an `=`: `--since main` and `--since=main` are the same.
 
@@ -215,7 +226,7 @@ Output:
 Dry run: 2 bundles, 4 files, 938 lines
 ```
 
-Each bundle lists the files it would contain, so you can check the shape of a pattern before anything is written; `outDir` is left alone too. A bundle that declares [`linear`](./configuration.md#linear-issues) still calls the API — the counts are what it would produce right now, which it can't know offline.
+Each bundle lists the files it would contain, so you can check the shape of a pattern before anything is written; `outDir` is left alone too. A bundle that declares [`linear`](./configuration.md#linear-issues) still calls the API — the counts are what it would produce right now, which it can't know offline. A [`screenshot`](./configuration.md#screenshots) bundle is the opposite: it is listed with its URL and viewport, and no browser is launched.
 
 ### Bundle without upload
 
