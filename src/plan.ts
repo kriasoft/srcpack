@@ -1,26 +1,36 @@
 // SPDX-License-Identifier: MIT
 
-import { join, relative, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { pathKey, type BundleResult } from "./bundle.ts";
 import { ConfigError, type BundleConfig } from "./config.ts";
-import { entryPath } from "./fs.ts";
+import { entryPath, physicalPath } from "./fs.ts";
+import {
+  isImageOf,
+  toScreenshotTarget,
+  type CapturedImages,
+  type ScreenshotTarget,
+} from "./screenshot.ts";
 
 // A run is split by phase. Selection, collision checks and own-output exclusion
 // read `PlannedBundle`; writing, reporting and upload read `ResolvedBundle`.
-// Destinations are derived once, and collisions fail before any source resolves.
+// Destinations are derived once, and collisions fail before any source resolves
+// or a browser launches.
 
 /** Where a bundle writes, derived from config once. */
 export interface PlannedBundle {
   name: string;
   source: BundleConfig;
-  /** Absolute path of the text output. */
-  text: { outfile: string };
+  /** Absolute path of the text output. Absent for a screenshot-only bundle. */
+  text?: { outfile: string };
+  /** Page to capture into `<dir>/<name>-NN.png`. */
+  images?: { target: ScreenshotTarget; dir: string };
 }
 
 /** What a bundle produced, ready to write. */
 export interface ResolvedBundle {
   plan: PlannedBundle;
-  text: BundleResult;
+  text?: BundleResult;
+  images?: CapturedImages;
 }
 
 export interface BundleSelection {
@@ -68,10 +78,13 @@ export interface OutputPlan {
   /** The bundles this run builds, in order. */
   bundles: PlannedBundle[];
   /**
-   * Absolute paths srcpack writes, never to be bundled: every configured
+   * Absolute paths srcpack writes, never to be bundled: every configured text
    * output and every active one, each in lexical and entry spelling. A glob
    * rooted at a symlink yields lexical paths, one rooted at the real directory
    * yields physical ones, and either can name a file the previous run wrote.
+   *
+   * Image families need no entry: they always live in outDir, which the CLI
+   * excludes, and when outDir holds the root a PNG is skipped as binary anyway.
    */
   ownOutputs: string[];
 }
@@ -82,21 +95,103 @@ function planBundle(
   root: string,
   outDir: string,
 ): PlannedBundle {
-  const outfile =
-    typeof source === "object" && !Array.isArray(source) && source.outfile
-      ? source.outfile
-      : join(outDir, `${name}.txt`);
-  return { name, source, text: { outfile: resolve(root, outfile) } };
+  const object =
+    typeof source === "object" && !Array.isArray(source) ? source : undefined;
+  const plan: PlannedBundle = { name, source };
+  // Every bundle writes text unless a screenshot is all it declares
+  if (!object || object.include || object.linear) {
+    const outfile = object?.outfile ?? join(outDir, `${name}.txt`);
+    plan.text = { outfile: resolve(root, outfile) };
+  }
+  // No `outfile` for images: they stay in outDir, so replacing stale ones
+  // never reaches a directory srcpack doesn't own
+  if (object?.screenshot) {
+    plan.images = {
+      target: toScreenshotTarget(object.screenshot),
+      dir: resolve(root, outDir),
+    };
+  }
+  return plan;
+}
+
+/**
+ * A claim on a destination: a text file, or an image family — a directory
+ * plus a name prefix. Compared folded (`pathKey`) and physically.
+ *
+ * A text file's directory is its entry path's parent, as for any output. A
+ * family's directory resolves fully: it is an ancestor of every PNG, and
+ * `rename` replaces only the last component (ADR 004).
+ */
+interface Claim {
+  owner: string;
+  kind: "file" | "family";
+  dir: string;
+  /** Folded file name, or folded bundle name for a family. */
+  name: string;
+  /** Absolute path shown in a collision message. */
+  display: string;
+}
+
+function overlaps(a: Claim, b: Claim): boolean {
+  if (a.dir !== b.dir) return false;
+  if (a.kind === b.kind) return a.name === b.name;
+  const [file, family] = a.kind === "file" ? [a, b] : [b, a];
+  return isImageOf(family.name, file.name);
+}
+
+async function claimsOf(plan: PlannedBundle): Promise<Claim[]> {
+  const claims: Claim[] = [];
+  if (plan.text) {
+    const entry = await entryPath(plan.text.outfile);
+    claims.push({
+      owner: plan.name,
+      kind: "file",
+      dir: pathKey(dirname(entry)),
+      name: pathKey(basename(entry)),
+      display: plan.text.outfile,
+    });
+  }
+  if (plan.images) {
+    claims.push({
+      owner: plan.name,
+      kind: "family",
+      dir: pathKey(await physicalPath(plan.images.dir)),
+      name: pathKey(plan.name),
+      display: join(plan.images.dir, `${plan.name}-NN.png`),
+    });
+  }
+  return claims;
+}
+
+function collision(first: Claim, second: Claim, root: string): ConfigError {
+  // Name the later bundle's destination, unless only the earlier one is a file:
+  // a file is what the user can change
+  const { display } =
+    first.kind === "file" && second.kind === "family" ? first : second;
+  const where = relative(root, display) || display;
+  if (first.owner === second.owner) {
+    return new ConfigError(
+      `Bundle "${first.owner}" writes its text and its images to "${where}". Give it another outfile.`,
+    );
+  }
+  return new ConfigError(
+    `Bundles "${first.owner}" and "${second.owner}" both write to "${where}". ` +
+      (first.kind === "family" && second.kind === "family"
+        ? "Rename one of them."
+        : "Give one of them its own outfile."),
+  );
 }
 
 /**
  * Derive where every bundle writes and reject two bundles sharing a file.
  *
  * Sharing is silent loss: the second write replaces the first, and upload then
- * sends the survivor twice under two names. Destinations are keyed by entry
- * path and folded with `pathKey` — `.srcpack/a.txt` and `alias/a.txt` are one
- * file once `alias` links to `.srcpack`, and so are `Web.txt` and `web.txt`
- * wherever the filesystem folds case.
+ * sends the survivor twice under two names. Destinations are folded with
+ * `pathKey` — `.srcpack/a.txt` and `alias/a.txt` are one file once `alias`
+ * links to `.srcpack`, and so are `Web.txt` and `web.txt` wherever the
+ * filesystem folds case. A text file collides with an image family when it
+ * sits in the family's directory under one of its numbered names, the same
+ * bundle's family included.
  *
  * Configured bundles are checked against each other on every run, so a config
  * error doesn't depend on what was asked for. Active bundles — the ones `active`
@@ -113,31 +208,32 @@ export async function planOutputs(
   active: [name: string, source: BundleConfig][],
 ): Promise<OutputPlan> {
   const ownOutputs = new Set<string>();
-  const writers = new Map<string, string>();
+  const claims: Claim[] = [];
 
-  const claim = async (plan: PlannedBundle, owner: string | undefined) => {
-    const entry = await entryPath(plan.text.outfile);
-    const key = pathKey(entry);
-    const first = writers.get(key);
-    if (first !== undefined && first !== owner) {
-      throw new ConfigError(
-        `Bundles "${first}" and "${plan.name}" both write to "${relative(root, plan.text.outfile) || plan.text.outfile}". ` +
-          "Give one of them its own outfile.",
+  const claim = async (plan: PlannedBundle, shadowsOwnName: boolean) => {
+    for (const next of await claimsOf(plan)) {
+      const taken = claims.find(
+        (prior) =>
+          !(shadowsOwnName && prior.owner === next.owner) &&
+          overlaps(prior, next),
       );
+      if (taken) throw collision(taken, next, root);
+      claims.push(next);
     }
-    writers.set(key, plan.name);
-    ownOutputs.add(plan.text.outfile);
-    ownOutputs.add(entry);
+    if (plan.text) {
+      ownOutputs.add(plan.text.outfile);
+      ownOutputs.add(await entryPath(plan.text.outfile));
+    }
   };
 
   for (const [name, source] of Object.entries(configured)) {
-    await claim(planBundle(name, source, root, outDir), undefined);
+    await claim(planBundle(name, source, root, outDir), false);
   }
 
   const bundles: PlannedBundle[] = [];
   for (const [name, source] of active) {
     const plan = planBundle(name, source, root, outDir);
-    await claim(plan, name);
+    await claim(plan, true);
     bundles.push(plan);
   }
 

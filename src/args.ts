@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 import { parseArgs } from "node:util";
+import type { BundleConfig } from "./config.ts";
 
 /** A mistake on the command line: reported without a stack trace. */
 export class UsageError extends Error {
@@ -11,12 +12,13 @@ export class UsageError extends Error {
 }
 
 /**
- * One-off bundle from a `git:` source instead of a configured one. Needs no
- * config file — reviewing what you just wrote is throwaway, not worth committing.
+ * One-off bundle from a `git:` source or a URL instead of a configured one.
+ * Needs no config file — reviewing what you just wrote, or how a page looks on
+ * a phone, is throwaway and not worth committing.
  */
 export interface AdHocBundle {
   name: string;
-  patterns: string[];
+  source: BundleConfig;
 }
 
 export interface CliArgs {
@@ -41,17 +43,27 @@ export interface CliArgs {
 const OPTIONS = {
   staged: { type: "boolean" },
   dirty: { type: "boolean" },
-  // `multiple` so a repeat is seen and rejected rather than last-one-wins
+  // Valued options are `multiple` so a repeat is seen and rejected rather
+  // than last-one-wins
   since: { type: "string", multiple: true },
+  screenshot: { type: "string", multiple: true },
+  viewport: { type: "string", multiple: true },
   "dry-run": { type: "boolean" },
   emptyOutDir: { type: "boolean" },
   "no-emptyOutDir": { type: "boolean" },
   "no-upload": { type: "boolean" },
 } as const;
 
-const AD_HOC_FLAGS = ["staged", "dirty", "since"] as const;
+const AD_HOC_FLAGS = ["staged", "dirty", "since", "screenshot"] as const;
 
-const MISSING_REVISION = "Missing revision: --since <rev> (e.g. --since main)";
+const MISSING_VALUE = {
+  since: "Missing revision: --since <rev> (e.g. --since main)",
+  screenshot:
+    "Missing URL: --screenshot <url> (e.g. --screenshot localhost:5173)",
+  viewport: "Missing viewport: --viewport <desktop|mobile>",
+};
+
+const VIEWPORTS = ["desktop", "mobile"] as const;
 
 /**
  * Parse everything after `srcpack` except `--help`, `--version` and the
@@ -86,13 +98,25 @@ export function parseCliArgs(argv: string[]): CliArgs {
       `Cannot combine ${adHocFlags.map((flag) => `--${flag}`).join(" and ")}.`,
     );
   }
-  const [rev, ...extraRevs] = values.since ?? [];
-  if (extraRevs.length) {
-    throw new UsageError(
-      `--since takes one revision; got ${[rev, ...extraRevs].map((r) => `"${r}"`).join(" and ")}.`,
-    );
+  for (const flag of Object.keys(
+    MISSING_VALUE,
+  ) as (keyof typeof MISSING_VALUE)[]) {
+    const given = values[flag] ?? [];
+    if (given.length > 1) {
+      throw new UsageError(
+        `--${flag} takes one value; got ${given.map((v) => `"${v}"`).join(" and ")}.`,
+      );
+    }
   }
-  const adHoc = toAdHocBundle(adHocFlags[0], rev);
+  const [viewport] = values.viewport ?? [];
+  if (viewport !== undefined && !values.screenshot) {
+    throw new UsageError("--viewport applies to --screenshot <url>.");
+  }
+  const adHoc = toAdHocBundle(adHocFlags[0], {
+    since: values.since?.[0],
+    screenshot: values.screenshot?.[0],
+    viewport,
+  });
   if (adHoc && positionals.length) {
     throw new UsageError(`Cannot combine --${adHoc.name} with named bundles.`);
   }
@@ -112,16 +136,17 @@ export function parseCliArgs(argv: string[]): CliArgs {
 
 function toAdHocBundle(
   flag: (typeof AD_HOC_FLAGS)[number] | undefined,
-  rev: string | undefined,
+  value: { since?: string; screenshot?: string; viewport?: string },
 ): AdHocBundle | null {
   switch (flag) {
     case "staged":
-      return { name: "staged", patterns: ["git:staged"] };
+      return { name: "staged", source: ["git:staged"] };
     case "dirty":
-      return { name: "dirty", patterns: ["git:dirty"] };
-    case "since":
+      return { name: "dirty", source: ["git:dirty"] };
+    case "since": {
+      const rev = value.since;
       // `--since=` parses as an empty value rather than a missing one
-      if (!rev) throw new UsageError(MISSING_REVISION);
+      if (!rev) throw new UsageError(MISSING_VALUE.since);
       // A range pins both endpoints, so it would silently drop the uncommitted
       // work --since promises. Ranges belong in a config `git:` source.
       if (rev.includes("..")) {
@@ -131,7 +156,36 @@ function toAdHocBundle(
       }
       // `git diff` can't see untracked files, but a new file written on this
       // branch is part of "what changed since <rev>"
-      return { name: "since", patterns: [`git:${rev}`, "git:untracked"] };
+      return { name: "since", source: [`git:${rev}`, "git:untracked"] };
+    }
+    case "screenshot": {
+      if (!value.screenshot) throw new UsageError(MISSING_VALUE.screenshot);
+      // Typed at a prompt, `localhost:5173` means http. Config URLs must carry
+      // the scheme, since there they are written once and read by others.
+      const url = value.screenshot.includes("://")
+        ? value.screenshot
+        : `http://${value.screenshot}`;
+      if (!/^https?:\/\//i.test(url) || !URL.canParse(url)) {
+        throw new UsageError(
+          `--screenshot takes an http(s) URL, got "${value.screenshot}".`,
+        );
+      }
+      const viewport = value.viewport ?? "desktop";
+      if (!(VIEWPORTS as readonly string[]).includes(viewport)) {
+        throw new UsageError(
+          `--viewport must be "desktop" or "mobile", got "${viewport}".`,
+        );
+      }
+      return {
+        name: "screenshot",
+        source: {
+          screenshot: {
+            url,
+            viewport: viewport as (typeof VIEWPORTS)[number],
+          },
+        },
+      };
+    }
     default:
       return null;
   }
@@ -154,13 +208,15 @@ function toUsageError(error: NodeJS.ErrnoException): Error {
       return unknownOption(
         /'([^']+)'/.exec(error.message)?.[1] ?? error.message,
       );
-    case "ERR_PARSE_ARGS_INVALID_OPTION_VALUE":
+    case "ERR_PARSE_ARGS_INVALID_OPTION_VALUE": {
       // Missing (`--since`) or swallowed by the next flag (`--since -x`)
+      const flag = /^Option '--([\w-]+)/.exec(error.message)?.[1];
       return new UsageError(
-        error.message.startsWith("Option '--since")
-          ? MISSING_REVISION
+        flag && Object.hasOwn(MISSING_VALUE, flag)
+          ? MISSING_VALUE[flag as keyof typeof MISSING_VALUE]
           : error.message,
       );
+    }
     default:
       return error;
   }

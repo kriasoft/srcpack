@@ -32,6 +32,10 @@ describe("planOutputs", () => {
         text: { outfile: join(root, "out/docs.md") },
       },
     ]);
+    // A bundle that isn't active still claims its outputs
+    await expect(
+      planOutputs(root, ".srcpack", configured, [["web", configured.web!]]),
+    ).resolves.toMatchObject({ bundles: [{ name: "web" }] });
     // Inactive bundles' outputs are still srcpack's, and never bundled
     expect(plan.ownOutputs).toContain(join(root, ".srcpack/web.txt"));
   });
@@ -69,6 +73,109 @@ describe("planOutputs", () => {
     ]);
 
     expect(plan.bundles.map((b) => b.name)).toEqual(["staged"]);
+  });
+
+  test("should plan text, images, or both", async () => {
+    const configured = bundlesOf({
+      home: { screenshot: "http://localhost:5173/" },
+      pricing: {
+        include: "src/**",
+        screenshot: {
+          url: "http://localhost:5173/pricing",
+          viewport: "mobile",
+        },
+      },
+    });
+
+    const { bundles } = await planOutputs(root, ".srcpack", configured, [
+      ["home", configured.home!],
+      ["pricing", configured.pricing!],
+    ]);
+
+    // A screenshot-only bundle reserves no <name>.txt
+    expect(bundles[0]!.text).toBeUndefined();
+    expect(bundles[0]!.images).toEqual({
+      target: { url: "http://localhost:5173/", viewport: "desktop", hide: [] },
+      dir: join(root, ".srcpack"),
+    });
+    expect(bundles[1]!.text).toEqual({
+      outfile: join(root, ".srcpack/pricing.txt"),
+    });
+    expect(bundles[1]!.images?.target.viewport).toBe("mobile");
+  });
+
+  test("should reject an outfile inside its own bundle's image family", async () => {
+    const configured = bundlesOf({
+      home: {
+        include: "src/**",
+        screenshot: "http://x/",
+        outfile: ".srcpack/home-00.png",
+      },
+    });
+
+    await expect(planOutputs(root, ".srcpack", configured, [])).rejects.toThrow(
+      'Bundle "home" writes its text and its images to ".srcpack/home-00.png"',
+    );
+  });
+
+  test("should reject an outfile reaching a family through a symlink", async () => {
+    await mkdir(join(root, ".srcpack"), { recursive: true });
+    await symlink(join(root, ".srcpack"), join(root, "alias"));
+    const configured = bundlesOf({
+      home: { screenshot: "http://x/" },
+      notes: { include: "docs/**", outfile: "alias/HOME-03.png" },
+    });
+
+    await expect(planOutputs(root, ".srcpack", configured, [])).rejects.toThrow(
+      'Bundles "home" and "notes" both write to "alias/HOME-03.png"',
+    );
+  });
+
+  test("should tell apart families whose names only share a prefix", async () => {
+    const configured = bundlesOf({
+      home: { screenshot: "http://x/" },
+      "home-01": { screenshot: "http://x/01" },
+      notes: { include: "docs/**", outfile: ".srcpack/home-01.txt" },
+    });
+
+    await expect(
+      planOutputs(root, ".srcpack", configured, []),
+    ).resolves.toBeDefined();
+  });
+
+  test("should reject image families differing only by case", async () => {
+    const configured = bundlesOf({
+      Web: { screenshot: "http://x/" },
+      web: { screenshot: "http://x/" },
+    });
+
+    await expect(planOutputs(root, ".srcpack", configured, [])).rejects.toThrow(
+      'Bundles "Web" and "web" both write to ".srcpack/web-NN.png". Rename one of them.',
+    );
+  });
+
+  test("should let --screenshot shadow a configured screenshot bundle", async () => {
+    const configured = bundlesOf({
+      screenshot: { screenshot: "http://localhost:5173/" },
+    });
+
+    const { bundles } = await planOutputs(root, ".srcpack", configured, [
+      ["screenshot", { screenshot: { url: "http://localhost:3000/" } }],
+    ]);
+
+    expect(bundles[0]!.images?.target.url).toBe("http://localhost:3000/");
+  });
+
+  test("should reject --screenshot over another bundle's outfile", async () => {
+    const configured = bundlesOf({
+      notes: { include: "docs/**", outfile: ".srcpack/screenshot-00.png" },
+    });
+
+    await expect(
+      planOutputs(root, ".srcpack", configured, [
+        ["screenshot", { screenshot: { url: "http://localhost:3000/" } }],
+      ]),
+    ).rejects.toThrow('Bundles "notes" and "screenshot" both write to');
   });
 
   test("should reject an ad-hoc bundle writing over another bundle's file", async () => {

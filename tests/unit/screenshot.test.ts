@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { EventEmitter } from "node:events";
+import { pathKey } from "../../src/bundle.ts";
 import {
   imageFileName,
   isImageOf,
@@ -8,6 +10,7 @@ import {
   planSlices,
   ScreenshotError,
   toScreenshotTarget,
+  watchNetwork,
   type Playwright,
   type Require,
 } from "../../src/screenshot.ts";
@@ -89,8 +92,13 @@ describe("isImageOf", () => {
   test("should match a bundle's own numbered images", () => {
     expect(isImageOf("home", "home-00.png")).toBe(true);
     expect(isImageOf("home", "home-100.png")).toBe(true);
-    // Folded like every destination: one entry on macOS and Windows
-    expect(isImageOf("Web", "web-01.PNG")).toBe(true);
+  });
+
+  test("should match exactly, leaving folding to the caller", () => {
+    // Cleanup deletes what matches, so it must not widen by case
+    expect(isImageOf("Web", "web-01.PNG")).toBe(false);
+    // Collision checks fold both sides: one entry on macOS and Windows
+    expect(isImageOf(pathKey("Web"), pathKey("web-01.PNG"))).toBe(true);
   });
 
   test("should not cross-match similar bundle names", () => {
@@ -240,6 +248,40 @@ describe("launchBrowser", () => {
     await expect(launchBrowser(pw)).rejects.toThrow("has been closed");
     expect(pw.calls).toEqual([undefined]);
   });
+});
+
+describe("watchNetwork", () => {
+  test("should wait out requests that start and finish between polls", async () => {
+    const events = new EventEmitter();
+    const network = watchNetwork(events);
+    const started = Date.now();
+
+    // Each request completes within one tick, so sampling how many are in
+    // flight would never see one and call the page idle after 500 ms
+    let n = 0;
+    const timer = setInterval(() => {
+      const request = { id: n++ };
+      events.emit("request", request);
+      events.emit("requestfinished", request);
+    }, 100);
+    setTimeout(() => clearInterval(timer), 1000);
+
+    await network.idle();
+
+    // Last request near 1,000 ms, then the 500 ms quiet window
+    expect(Date.now() - started).toBeGreaterThanOrEqual(1400);
+  });
+
+  test("should not wait for a request that never finishes past the cap", async () => {
+    const events = new EventEmitter();
+    const network = watchNetwork(events);
+    events.emit("request", {});
+
+    const started = Date.now();
+    await network.idle();
+
+    expect(Date.now() - started).toBeGreaterThanOrEqual(4900);
+  }, 10_000);
 });
 
 describe("packageManager", () => {
