@@ -377,7 +377,7 @@ A project that already uses Playwright Test needs nothing new. Without Playwrigh
 | `<name>-00.png`               | The whole page, for layout               |
 | `<name>-01.png`, `-02.png`, … | Overlapping detail slices, top to bottom |
 
-Vision models downscale every image to a fixed pixel budget, so one image of a tall page arrives as a thumbnail. Detail slices are at most 2,200 device pixels tall and overlap by about 160, so text cut at one edge is whole in the next; a page just over one slice becomes two shorter slices rather than two near-copies. A page that fits in one slice produces only `<name>-00.png`.
+Vision models scale every image down to a fixed pixel budget, so a tall page captured whole arrives as a thumbnail. Detail slices stay readable after that: they are at most 2,200 device pixels tall and overlap by about 160, so text cut at one edge is whole in the next; a page just over one slice becomes two shorter slices rather than two near-copies. A page that fits in one slice produces only `<name>-00.png`. If the highest image index exceeds 99, all filenames use wider zero-padding (`-000.png`, `-001.png`, …) to preserve filename order.
 
 The overview is best-effort. If a very tall page can't be captured whole, or its image would exceed ChatGPT's 20 MB per-image limit, srcpack warns and writes the detail slices alone, starting at `-01`. Those still cover the whole page.
 
@@ -418,7 +418,7 @@ Srcpack skips:
 - Files matching `.gitignore` — including `node_modules/`, build output, and secrets, since those are already ignored in any normal project. Nested `.gitignore` files count too, resolved the way git resolves them: the rule in the deepest directory wins, and nothing under an ignored directory is re-included. A monorepo's `packages/app/.gitignore` hides its `.env` here exactly as it does for git.
 - Binary files (images, fonts, compiled assets), detected by content
 - Symlinks, so a link can't pull in a file from outside the project — including symlinked directories, which are not walked into
-- Its own output — `outDir` and every configured `outfile`. Otherwise a rerun would bundle the previous run's file, nesting it again each time.
+- Its own output — every configured or active text output, plus `outDir` unless it contains the project root. In that case, excluding the whole directory would also exclude the sources; individual text outputs remain excluded and PNGs are skipped as binary.
 
 Everything else matched by a pattern is included, so exclude what you don't want explicitly: `["src/**/*", "!bun.lock"]`.
 

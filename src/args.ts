@@ -20,11 +20,11 @@ export interface AdHocBundle {
 }
 
 export interface CliArgs {
-  /** Bundle names, in the order given. Empty for a full run. */
+  /** Bundle names in input order. Empty for full and ad-hoc runs. */
   bundles: string[];
   adHoc: AdHocBundle | null;
   dryRun: boolean;
-  /** Set only by a flag; `undefined` leaves the decision to config. */
+  /** Explicit CLI override; `undefined` lets the CLI apply config and run defaults. */
   emptyOutDir: boolean | undefined;
   upload: boolean;
 }
@@ -197,9 +197,8 @@ function unknownOption(option: string): UsageError {
 }
 
 /**
- * Restate parseArgs errors in srcpack's words. Its messages explain `--`
- * escaping and `--opt=-value` spellings, which answer a question nobody
- * mistyping `--no-upload` is asking.
+ * Translate unknown options and missing values into srcpack usage errors.
+ * Avoid parseArgs suggestions to use `--`, which srcpack rejects.
  */
 function toUsageError(error: NodeJS.ErrnoException): Error {
   switch (error.code) {

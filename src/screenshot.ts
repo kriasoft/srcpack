@@ -37,12 +37,11 @@ export function toScreenshotTarget(source: ScreenshotSource): ScreenshotTarget {
       };
 }
 
-// Vision models downscale every image to a fixed pixel budget, so a tall page
-// captured whole reaches them as a thumbnail. Detail slices stay within that
-// budget: at most 2,200 device px tall, overlapping by about 160 so a line of
-// text cut by one boundary is whole in the neighbouring slice. In device px,
-// not CSS px, so a DPR 2 capture covers half the page height per slice at the
-// same image size.
+// Vision models downscale each image to a fixed pixel budget, so a tall page
+// captured whole arrives as a thumbnail. Detail slices at most 2,200 device px
+// tall stay legible after that downscaling. Overlap preserves text across slice
+// boundaries. Device px keep the image height consistent across DPRs: at DPR 2,
+// each slice covers half as many CSS pixels.
 const SLICE_HEIGHT = 2200;
 const SLICE_OVERLAP = 160;
 
@@ -529,8 +528,8 @@ async function captureOverview(
 }
 
 /**
- * Commands for the package manager that ran srcpack, so the fix it prints is
- * one the user can paste. Every manager sets `npm_config_user_agent`.
+ * Match install commands to `npm_config_user_agent`, defaulting to npm when
+ * the invoking package manager is unknown.
  */
 export function packageManager(userAgent = ""): { add: string; exec: string } {
   switch (userAgent.split("/")[0]) {
