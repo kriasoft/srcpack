@@ -176,7 +176,7 @@ Opens a browser to authorize access. Tokens are stored in `~/.config/srcpack/cre
 | `-h`, `--help`     | Show help                                      |
 | `-v`, `--version`  | Show version                                   |
 
-An unrecognized option is an error, not a no-op — `--no-uplaod` would otherwise upload, and `--dry-rnu` would write.
+An unrecognized option is an error, not a no-op — `--no-uplaod` would otherwise upload, and `--dry-rnu` would write. Values may follow a space or an `=`: `--since main` and `--since=main` are the same.
 
 ## Examples
 

@@ -20,6 +20,7 @@ import {
   sep,
 } from "node:path";
 import ora from "ora";
+import { parseCliArgs, UsageError } from "./args.ts";
 import { bundleOne, pathKey, type BundleResult } from "./bundle.ts";
 import {
   ConfigError,
@@ -144,86 +145,6 @@ async function emptyDirectory(dir: string, skip: string[] = []): Promise<void> {
   );
 }
 
-/**
- * One-off bundle from a `git:` source instead of a configured one. Needs no
- * config file — reviewing what you just wrote is throwaway, not worth committing.
- */
-interface AdHocBundle {
-  name: string;
-  patterns: string[];
-}
-
-const AD_HOC_FLAGS = ["--staged", "--dirty", "--since"] as const;
-
-/**
- * Every option the CLI accepts. Anything else is a typo, and a typo that gets
- * quietly dropped is the dangerous kind: `--no-uplaod` uploads, `--dry-rnu`
- * writes, `--no-emptyOutdir` empties. Same rule as the config — a token that
- * changes what a run destroys or publishes is never a silent no-op.
- */
-const KNOWN_FLAGS = new Set([
-  ...AD_HOC_FLAGS,
-  "--dry-run",
-  "--emptyOutDir",
-  "--no-emptyOutDir",
-  "--no-upload",
-  "--help",
-  "-h",
-  "--version",
-  "-v",
-]);
-
-function assertKnownFlags(args: string[]): void {
-  const unknown = args.find(
-    (arg) => arg.startsWith("-") && !KNOWN_FLAGS.has(arg),
-  );
-  if (unknown) {
-    console.error(`Unknown option: ${unknown}`);
-    console.error("Run `srcpack --help` to see the available options.");
-    process.exit(1);
-  }
-  if (args.includes("--emptyOutDir") && args.includes("--no-emptyOutDir")) {
-    console.error("Cannot combine --emptyOutDir with --no-emptyOutDir.");
-    process.exit(1);
-  }
-}
-
-function parseAdHocBundle(args: string[]): AdHocBundle | null {
-  const flags = AD_HOC_FLAGS.filter((flag) => args.includes(flag));
-
-  if (flags.length > 1) {
-    console.error(`Cannot combine ${flags.join(" and ")}.`);
-    process.exit(1);
-  }
-
-  switch (flags[0]) {
-    case "--staged":
-      return { name: "staged", patterns: ["git:staged"] };
-    case "--dirty":
-      return { name: "dirty", patterns: ["git:dirty"] };
-    case "--since": {
-      const rev = args[args.indexOf("--since") + 1];
-      if (!rev || rev.startsWith("-")) {
-        console.error("Missing revision: --since <rev> (e.g. --since main)");
-        process.exit(1);
-      }
-      // A range pins both endpoints, so it would silently drop the uncommitted
-      // work --since promises. Ranges belong in a config `git:` source.
-      if (rev.includes("..")) {
-        console.error(
-          `--since takes a revision, not a range: "${rev}". Use a git: source in your config for ranges.`,
-        );
-        process.exit(1);
-      }
-      // `git diff` can't see untracked files, but a new file written on this
-      // branch is part of "what changed since <rev>"
-      return { name: "since", patterns: [`git:${rev}`, "git:untracked"] };
-    }
-    default:
-      return null;
-  }
-}
-
 /** Resolves to the package root from both `src/cli.ts` and `dist/cli.js`. */
 async function readVersion(): Promise<string> {
   const pkg = await readFile(
@@ -281,27 +202,13 @@ Options:
     return;
   }
 
-  assertKnownFlags(args);
-
-  const dryRun = args.includes("--dry-run");
-  const noUpload = args.includes("--no-upload");
-  // CLI flags: --emptyOutDir forces true, --no-emptyOutDir forces false
-  const emptyOutDirFlag = args.includes("--emptyOutDir")
-    ? true
-    : args.includes("--no-emptyOutDir")
-      ? false
-      : undefined;
-  const adHoc = parseAdHocBundle(args);
-  const sinceIndex = args.indexOf("--since");
-  const sinceValueIndex = sinceIndex === -1 ? -1 : sinceIndex + 1;
-  const requestedBundles = args.filter(
-    (arg, i) => !arg.startsWith("-") && i !== sinceValueIndex,
-  );
-
-  if (adHoc && requestedBundles.length) {
-    console.error(`Cannot combine --${adHoc.name} with named bundles.`);
-    process.exit(1);
-  }
+  const {
+    bundles: requestedBundles,
+    adHoc,
+    dryRun,
+    emptyOutDir: emptyOutDirFlag,
+    upload,
+  } = parseCliArgs(args);
 
   let config = await loadConfig();
 
@@ -535,7 +442,7 @@ Options:
     // Ad-hoc bundles stay local: uploading work-in-progress to Drive is not
     // what --staged asks for, and `upload.exclude` can't name a bundle the
     // config doesn't declare. Configure a named bundle to publish changes.
-    if (config.upload && !noUpload && !adHoc) {
+    if (config.upload && upload && !adHoc) {
       const uploads = Array.isArray(config.upload)
         ? config.upload
         : [config.upload];
@@ -700,9 +607,10 @@ function getOutfile(
 }
 
 main().catch((err) => {
-  // Config, git and Linear failures are user-facing; a stack trace adds noise
+  // Usage, config, git and Linear failures are user-facing; a stack trace adds noise
   console.error(
-    err instanceof ConfigError ||
+    err instanceof UsageError ||
+      err instanceof ConfigError ||
       err instanceof GitError ||
       err instanceof LinearError
       ? err.message
