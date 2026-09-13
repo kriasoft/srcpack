@@ -107,8 +107,11 @@ const BundleConfigSchema = z.union([
       linear: LinearSourceSchema.optional(),
       /** Custom output file path. Defaults to `<outDir>/<bundleName>.txt`. */
       outfile: z.string().min(1).optional(),
-      /** Include file index header in output. Defaults to true. */
-      index: z.boolean().default(true),
+      /**
+       * Include file index header in output. Defaults to true — read as
+       * `index ?? true`, not defaulted here, so a set value is distinguishable.
+       */
+      index: z.boolean().optional(),
       /** Text to prepend to bundle (e.g., review instructions for LLMs). */
       prompt: z.string().optional(),
       /**

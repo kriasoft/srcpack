@@ -77,16 +77,15 @@ describe("parseConfig", () => {
       });
     });
 
-    test("should default index to true for object config", () => {
+    test("should leave index unset when omitted", () => {
+      // Defaulted where it is read, so the schema can tell set from absent
       const config = parseConfig({
         bundles: {
           web: { include: "src/**/*" },
         },
       });
 
-      expect(
-        (config.bundles.web as { include: string; index: boolean }).index,
-      ).toBe(true);
+      expect(config.bundles.web).toEqual({ include: "src/**/*" });
     });
 
     test("should accept multiple bundles with mixed formats", () => {
@@ -426,7 +425,7 @@ describe("parseConfig", () => {
     test("should accept the team shorthand", () => {
       const config = parseConfig({ bundles: { backlog: { linear: "ENG" } } });
 
-      expect(config.bundles.backlog).toEqual({ linear: "ENG", index: true });
+      expect(config.bundles.backlog).toEqual({ linear: "ENG" });
     });
 
     test("should default includeClosed to false", () => {

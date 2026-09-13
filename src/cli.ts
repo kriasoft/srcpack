@@ -1,34 +1,18 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: MIT
 
-import {
-  mkdir,
-  readdir,
-  readFile,
-  realpath,
-  rename,
-  rm,
-  writeFile,
-} from "node:fs/promises";
-import {
-  basename,
-  dirname,
-  isAbsolute,
-  join,
-  relative,
-  resolve,
-  sep,
-} from "node:path";
+import { mkdir, readdir, readFile, rm } from "node:fs/promises";
+import { dirname, join, relative, resolve } from "node:path";
 import ora from "ora";
 import { parseCliArgs, UsageError } from "./args.ts";
-import { bundleOne, pathKey, type BundleResult } from "./bundle.ts";
+import { bundleOne, type BundleResult } from "./bundle.ts";
 import {
   ConfigError,
   loadConfig,
   parseConfig,
-  type BundleConfig,
   type UploadConfig,
 } from "./config.ts";
+import { isInside, physicalPath, writeFileAtomic } from "./fs.ts";
 import {
   ensureAuthenticated,
   login,
@@ -39,13 +23,7 @@ import {
 import { GitError } from "./git.ts";
 import { runInit } from "./init.ts";
 import { LinearError } from "./linear.ts";
-import { selectBundles } from "./plan.ts";
-
-interface BundleOutput {
-  name: string;
-  outfile: string;
-  result: BundleResult;
-}
+import { planOutputs, selectBundles, type ResolvedBundle } from "./plan.ts";
 
 function sumLines(result: BundleResult): number {
   return result.index.reduce((sum, entry) => sum + entry.lines, 0);
@@ -61,64 +39,6 @@ function plural(n: number, singular: string, pluralForm?: string): string {
 
 /** The directory srcpack owns by convention, and the only one it clears unasked. */
 const DEFAULT_OUT_DIR = ".srcpack";
-
-/**
- * Where a path physically is, with symlinks resolved. Destructive decisions are
- * made on this rather than the lexical path: `.srcpack -> ../shared` is inside
- * the project by name and somewhere else in fact, and it is the somewhere else
- * whose contents `rm` would take.
- *
- * Resolves as much of the path as exists, however deep that is. Stopping at the
- * immediate parent would call `.srcpack/nested/x.txt` and `alias/nested/x.txt`
- * different files until `mkdir -p` runs, which is one step too late to still be
- * a check: aliasing is a property of the ancestors, not of when they were made.
- */
-async function physicalPath(path: string): Promise<string> {
-  try {
-    return await realpath(path);
-  } catch {
-    const parent = dirname(path);
-    // dirname("/") === "/": nothing above the filesystem root left to resolve
-    if (parent === path) return path;
-    return join(await physicalPath(parent), basename(path));
-  }
-}
-
-/**
- * Where `rename` puts a directory entry: ancestors resolved, the entry itself
- * left alone. Writing replaces the entry instead of following it, so a bundle
- * whose output is a symlink is identified as the link rather than its target —
- * two bundles writing over one link's target are still two separate files.
- */
-async function entryPath(path: string): Promise<string> {
-  return join(await physicalPath(dirname(path)), basename(path));
-}
-
-function isInside(path: string, dir: string): boolean {
-  const rel = relative(dir, path);
-  // Compare against ".." as a whole segment — "..cache/x" is a child, not an escape
-  return rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
-}
-
-/**
- * Write a bundle by replacing the directory entry rather than the file behind
- * it. Writing in place follows a symlink sitting at the output path, so
- * `.srcpack/web.txt -> ~/.ssh/config` would be written through; rename replaces
- * the link itself. It also makes each file appear whole or not at all.
- *
- * The temp name carries the pid so two runs can't rename each other's file.
- */
-async function writeBundle(path: string, content: string): Promise<void> {
-  const temp = `${path}.${process.pid}.tmp`;
-  try {
-    await writeFile(temp, content);
-    await rename(temp, path);
-  } finally {
-    // A failed write or rename would otherwise leave a partial file behind:
-    // stale inside outDir, and bundled by the next run beside a custom outfile.
-    await rm(temp, { force: true });
-  }
-}
 
 /**
  * Empty a directory while preserving specified entries (e.g., `.git`).
@@ -285,45 +205,18 @@ Options:
     );
   }
 
-  // srcpack never bundles what srcpack writes. Every configured outfile is
-  // named explicitly; outDir covers stale bundles from renamed config entries
-  // too, but not when it holds the root — that would exclude the whole project.
-  //
-  // Both spellings of every output are recorded. A glob rooted at a symlink
-  // yields lexical paths, one rooted at the real directory yields physical
-  // ones, and either can name a file the previous run wrote.
-  const ownOutputs = new Set<string>();
-  const writers = new Map<string, string>();
-  for (const [name, bundleConfig] of Object.entries(config.bundles)) {
-    const outfile = resolve(
-      root,
-      getOutfile(bundleConfig, name, config.outDir),
-    );
-    // Two bundles sharing one file is silent loss: the second write replaces the
-    // first, and the upload step then sends the survivor twice under two names.
-    // Keyed by destination entry — `.srcpack/a.txt` and `alias/a.txt` are two
-    // spellings of one file as soon as `alias` links to `.srcpack`, and so are
-    // `Web.txt` and `web.txt` wherever the filesystem folds case.
-    const entry = await entryPath(outfile);
-    const key = pathKey(entry);
-    const first = writers.get(key);
-    if (first) {
-      throw new ConfigError(
-        `Bundles "${first}" and "${name}" both write to "${relative(root, outfile) || outfile}". ` +
-          "Give one of them its own outfile.",
-      );
-    }
-    writers.set(key, name);
-    ownOutputs.add(outfile);
-    ownOutputs.add(entry);
-  }
-  if (!outDirHoldsRoot) {
-    ownOutputs.add(outDirPath);
-    ownOutputs.add(outDirPhysical);
-  }
-  const outputPaths = [...ownOutputs];
+  // srcpack never bundles what srcpack writes. Every output is named
+  // explicitly; outDir covers stale bundles from renamed config entries too,
+  // but not when it holds the root — that would exclude the whole project.
+  const { bundles: plans, ownOutputs } = await planOutputs(
+    root,
+    config.outDir,
+    config.bundles,
+    bundleNames.map((name) => [name, bundles[name]!]),
+  );
+  if (!outDirHoldsRoot) ownOutputs.push(outDirPath, outDirPhysical);
 
-  const outputs: BundleOutput[] = [];
+  const outputs: ResolvedBundle[] = [];
 
   // Process all bundles with progress
   const bundleSpinner = ora({
@@ -332,13 +225,12 @@ Options:
   }).start();
 
   try {
-    for (let i = 0; i < bundleNames.length; i++) {
-      const name = bundleNames[i]!;
-      bundleSpinner.text = `Bundling ${name}... (${i + 1}/${bundleNames.length})`;
-      const bundleConfig = bundles[name]!;
-      let result: BundleResult;
+    for (let i = 0; i < plans.length; i++) {
+      const plan = plans[i]!;
+      bundleSpinner.text = `Bundling ${plan.name}... (${i + 1}/${plans.length})`;
+      let text: BundleResult;
       try {
-        result = await bundleOne(bundleConfig, root, outputPaths);
+        text = await bundleOne(plan.source, root, ownOutputs);
       } catch (error) {
         // A config can declare many bundles; the underlying message says what
         // broke but not which bundle asked for it.
@@ -347,12 +239,11 @@ Options:
           error instanceof GitError ||
           error instanceof LinearError
         ) {
-          error.message = `Bundle "${name}": ${error.message}`;
+          error.message = `Bundle "${plan.name}": ${error.message}`;
         }
         throw error;
       }
-      const outfile = getOutfile(bundleConfig, name, config.outDir);
-      outputs.push({ name, outfile, result });
+      outputs.push({ plan, text });
     }
   } finally {
     bundleSpinner.stop();
@@ -375,22 +266,22 @@ Options:
   }
 
   // Calculate column widths for aligned output
-  const maxNameLen = Math.max(...outputs.map((o) => o.name.length));
+  const maxNameLen = Math.max(...outputs.map((o) => o.plan.name.length));
   const maxFilesLen = Math.max(
-    ...outputs.map((o) => formatNumber(o.result.index.length).length),
+    ...outputs.map((o) => formatNumber(o.text.index.length).length),
   );
   const maxLinesLen = Math.max(
-    ...outputs.map((o) => formatNumber(sumLines(o.result)).length),
+    ...outputs.map((o) => formatNumber(sumLines(o.text)).length),
   );
 
   // Print each bundle
   console.log();
-  for (const { name, outfile, result } of outputs) {
+  for (const { plan, text: result } of outputs) {
     const fileCount = result.index.length;
     const lineCount = sumLines(result);
-    const outPath = resolve(root, outfile);
+    const outPath = plan.text.outfile;
 
-    const nameCol = name.padEnd(maxNameLen);
+    const nameCol = plan.name.padEnd(maxNameLen);
     const filesCol = formatNumber(fileCount).padStart(maxFilesLen);
     const linesCol = formatNumber(lineCount).padStart(maxLinesLen);
 
@@ -412,7 +303,7 @@ Options:
       );
     } else {
       await mkdir(dirname(outPath), { recursive: true });
-      await writeBundle(outPath, result.content);
+      await writeFileAtomic(outPath, result.content);
       const displayPath = relative(process.cwd(), outPath);
       console.log(
         `  ${nameCol}  ${filesCol} ${plural(fileCount, "file")}  ${linesCol} ${plural(lineCount, "line")}  → ${displayPath}`,
@@ -421,8 +312,8 @@ Options:
   }
 
   // Print summary
-  const totalFiles = outputs.reduce((sum, o) => sum + o.result.index.length, 0);
-  const totalLines = outputs.reduce((sum, o) => sum + sumLines(o.result), 0);
+  const totalFiles = outputs.reduce((sum, o) => sum + o.text.index.length, 0);
+  const totalLines = outputs.reduce((sum, o) => sum + sumLines(o.text), 0);
   const bundleWord = plural(outputs.length, "bundle");
   const fileWord = plural(totalFiles, "file");
   const lineWord = plural(totalLines, "line");
@@ -449,7 +340,7 @@ Options:
 
       for (const uploadConfig of uploads) {
         if (isGdriveConfigured(uploadConfig)) {
-          await handleGdriveUpload(uploadConfig, outputs, root);
+          await handleGdriveUpload(uploadConfig, outputs);
         }
       }
     }
@@ -529,13 +420,12 @@ function printUploadConfigHelp(): void {
 
 async function handleGdriveUpload(
   uploadConfig: UploadConfig,
-  outputs: BundleOutput[],
-  root: string,
+  outputs: ResolvedBundle[],
 ): Promise<void> {
   // Filter out excluded bundles and empty ones (never written to disk)
   const excludeSet = new Set(uploadConfig.exclude ?? []);
   const toUpload = outputs.filter(
-    (o) => !excludeSet.has(o.name) && o.result.index.length > 0,
+    (o) => !excludeSet.has(o.plan.name) && o.text.index.length > 0,
   );
 
   if (toUpload.length === 0) {
@@ -555,10 +445,9 @@ async function handleGdriveUpload(
 
     try {
       for (let i = 0; i < toUpload.length; i++) {
-        const output = toUpload[i]!;
-        const filePath = resolve(root, output.outfile);
-        uploadSpinner.text = `Uploading ${output.name}... (${i + 1}/${toUpload.length})`;
-        const result = await uploadFile(filePath, uploadConfig);
+        const { plan } = toUpload[i]!;
+        uploadSpinner.text = `Uploading ${plan.name}... (${i + 1}/${toUpload.length})`;
+        const result = await uploadFile(plan.text.outfile, uploadConfig);
         results.push(result);
       }
     } finally {
@@ -589,21 +478,6 @@ async function handleGdriveUpload(
       throw error;
     }
   }
-}
-
-function getOutfile(
-  bundleConfig: BundleConfig,
-  name: string,
-  outDir: string,
-): string {
-  if (
-    typeof bundleConfig === "object" &&
-    !Array.isArray(bundleConfig) &&
-    bundleConfig.outfile
-  ) {
-    return bundleConfig.outfile;
-  }
-  return join(outDir, `${name}.txt`);
 }
 
 main().catch((err) => {
