@@ -12,7 +12,7 @@ A bundle may set `onDemand: true`. A full run (`srcpack`) skips it and prints `O
 
 The rule is the same for every source. Screenshot bundles are not on demand implicitly: a default that depends on source type is one more rule to learn.
 
-Emptying does not change. A full run still empties `outDir`, which removes on-demand output; the workflow is `srcpack`, then `srcpack home`.
+Emptying does not change. A full run that empties `outDir` — by default only `.srcpack` — removes on-demand output inside it; the workflow is `srcpack`, then `srcpack home`. Where emptying is off, or an `outfile` sits outside `outDir`, that output survives and goes stale, exactly as a renamed bundle's does.
 
 ## Alternatives
 
@@ -21,4 +21,4 @@ Emptying does not change. A full run still empties `outDir`, which removes on-de
 
 ## Consequences
 
-A full run no longer means "every configured bundle". Output of an on-demand bundle does not survive a full run, which is visible (the file is gone) rather than stale.
+A full run no longer means "every configured bundle". Under the default `.srcpack`, output of an on-demand bundle does not survive a full run, which is visible (the file is gone) rather than stale.

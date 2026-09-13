@@ -202,6 +202,11 @@ describe("screenshot bundles", () => {
       // 3,500 px as served; 5,500 once the spacer went in
       expect(await pngSize(overview)).toEqual([1440, 5500]);
       expect(await pixelAt(overview, 720, 5250)).toEqual(GREEN);
+      // Details too: slices start at 0, 1,650 and 3,300, so C's middle sits
+      // at 1,950 in the last one. A capture repeating y=0 would show white.
+      const last = join(dir, ".srcpack/home-03.png");
+      expect(await pngSize(last)).toEqual([1440, 2200]);
+      expect(await pixelAt(last, 720, 1950)).toEqual(GREEN);
     },
     TIMEOUT,
   );

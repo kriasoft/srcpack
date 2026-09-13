@@ -159,9 +159,9 @@ const BundleConfigSchema = z.union([
       prompt: z.string().optional(),
       /**
        * Skipped by a full run, built when named: `srcpack <name>`. For bundles
-       * too slow, remote or situational to rebuild every time. A full run still
-       * empties `outDir`, removing their output — preserving it would make
-       * emptying a growing list of exceptions (ADR 005).
+       * too slow, remote or situational to rebuild every time. A full run that
+       * empties `outDir` still removes their output there — preserving it
+       * would make emptying a growing list of exceptions (ADR 005).
        */
       onDemand: z.boolean().optional(),
     })

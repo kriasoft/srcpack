@@ -152,7 +152,7 @@ bundles: {
 | `srcpack backlog` | `backlog`, on demand or not               |
 | `--dry-run`       | the same selection as the run it previews |
 
-A full run lists what it skipped (`On demand: backlog`). It still empties `outDir`, which removes an on-demand bundle's previous output — run `srcpack`, then `srcpack backlog`.
+A full run lists what it skipped (`On demand: backlog`). A full run that empties `outDir` (by default, only `.srcpack` is emptied) removes an on-demand bundle's previous output there — run `srcpack`, then `srcpack backlog`.
 
 ## Pattern Syntax
 
@@ -406,6 +406,7 @@ The string form `screenshot: "http://…"` is shorthand for `{ url: "http://…"
 - **`--dry-run` doesn't open the page.** It lists the URL, viewport and destination; how many images a page produces is only known after rendering it.
 - **A page without `<meta name="viewport">`** lays out 980 CSS pixels wide under `mobile`, as it would on a real phone. If a mobile capture looks like the desktop site, that's why.
 - **Two bundles whose names differ only by case** would write one set of files on macOS and Windows, so `Web` and `web` screenshot bundles are rejected everywhere, as is an `outfile` named like another bundle's image.
+- **A page that scrolls inside its own container** (the window never scrolls) is captured as a single viewport.
 - **Pages behind a login aren't supported yet.**
 
 ## Automatic Exclusions

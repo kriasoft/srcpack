@@ -44,6 +44,30 @@ function plural(n: number, singular: string, pluralForm?: string): string {
   return n === 1 ? singular : (pluralForm ?? singular + "s");
 }
 
+/**
+ * "3 bundles, 42 files, 3,120 lines, 15 images". Files and lines appear only
+ * when some bundle wrote text; images aren't counted in a dry run, which never
+ * renders them.
+ */
+function formatCounts(outputs: ResolvedBundle[]): string {
+  const texts = outputs.flatMap((o) => (o.text ? [o.text] : []));
+  const files = texts.reduce((sum, t) => sum + t.index.length, 0);
+  const lines = texts.reduce((sum, t) => sum + sumLines(t), 0);
+  const images = outputs.reduce(
+    (sum, o) => sum + (o.images?.images.length ?? 0),
+    0,
+  );
+  const counts = [`${outputs.length} ${plural(outputs.length, "bundle")}`];
+  if (texts.length) {
+    counts.push(
+      `${formatNumber(files)} ${plural(files, "file")}`,
+      `${formatNumber(lines)} ${plural(lines, "line")}`,
+    );
+  }
+  if (images) counts.push(`${formatNumber(images)} ${plural(images, "image")}`);
+  return counts.join(", ");
+}
+
 /** The directory srcpack owns by convention, and the only one it clears unasked. */
 const DEFAULT_OUT_DIR = ".srcpack";
 
@@ -313,9 +337,9 @@ Options:
   } finally {
     bundleSpinner.stop();
     await capturer.close();
+    // Also when a later bundle fails: a page-growth warning may explain it
+    for (const warning of warnings) console.warn(warning);
   }
-
-  for (const warning of warnings) console.warn(warning);
 
   // Empty outDir only once every bundle has resolved, and only for a full run:
   // a named subset can't tell what is stale, so `srcpack web` must not delete
@@ -405,31 +429,12 @@ Options:
     }
   }
 
-  // Print summary. Files and lines only when some bundle wrote text; images
-  // aren't counted in a dry run, which never renders them.
-  const totalFiles = textResults.reduce((sum, t) => sum + t.index.length, 0);
-  const totalLines = textResults.reduce((sum, t) => sum + sumLines(t), 0);
-  const totalImages = outputs.reduce(
-    (sum, o) => sum + (o.images?.images.length ?? 0),
-    0,
-  );
-  const counts = [`${outputs.length} ${plural(outputs.length, "bundle")}`];
-  if (textResults.length) {
-    counts.push(
-      `${formatNumber(totalFiles)} ${plural(totalFiles, "file")}`,
-      `${formatNumber(totalLines)} ${plural(totalLines, "line")}`,
-    );
-  }
-  if (totalImages) {
-    counts.push(`${formatNumber(totalImages)} ${plural(totalImages, "image")}`);
-  }
-
   console.log();
   if (dryRun) {
-    console.log(`Dry run: ${counts.join(", ")}`);
+    console.log(`Dry run: ${formatCounts(outputs)}`);
     if (onDemandNote) console.log(onDemandNote);
   } else {
-    console.log(`Bundled: ${counts.join(", ")}`);
+    console.log(`Bundled: ${formatCounts(outputs)}`);
     if (onDemandNote) console.log(onDemandNote);
 
     // Ad-hoc bundles stay local: uploading work-in-progress to Drive is not

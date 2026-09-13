@@ -162,7 +162,8 @@ function toAdHocBundle(
       if (!value.screenshot) throw new UsageError(MISSING_VALUE.screenshot);
       // Typed at a prompt, `localhost:5173` means http. Config URLs must carry
       // the scheme, since there they are written once and read by others.
-      const url = value.screenshot.includes("://")
+      // Only a leading scheme counts: `localhost:5173/?next=https://x` has none
+      const url = /^[a-z][a-z\d+.-]*:\/\//i.test(value.screenshot)
         ? value.screenshot
         : `http://${value.screenshot}`;
       if (!/^https?:\/\//i.test(url) || !URL.canParse(url)) {

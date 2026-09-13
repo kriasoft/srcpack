@@ -139,10 +139,13 @@ function overlaps(a: Claim, b: Claim): boolean {
   return isImageOf(family.name, file.name);
 }
 
-async function claimsOf(plan: PlannedBundle): Promise<Claim[]> {
+/** `entry` is the text output's entry path, resolved once by the caller. */
+async function claimsOf(
+  plan: PlannedBundle,
+  entry: string | undefined,
+): Promise<Claim[]> {
   const claims: Claim[] = [];
-  if (plan.text) {
-    const entry = await entryPath(plan.text.outfile);
+  if (plan.text && entry) {
     claims.push({
       owner: plan.name,
       kind: "file",
@@ -211,7 +214,8 @@ export async function planOutputs(
   const claims: Claim[] = [];
 
   const claim = async (plan: PlannedBundle, shadowsOwnName: boolean) => {
-    for (const next of await claimsOf(plan)) {
+    const entry = plan.text && (await entryPath(plan.text.outfile));
+    for (const next of await claimsOf(plan, entry)) {
       const taken = claims.find(
         (prior) =>
           !(shadowsOwnName && prior.owner === next.owner) &&
@@ -220,9 +224,9 @@ export async function planOutputs(
       if (taken) throw collision(taken, next, root);
       claims.push(next);
     }
-    if (plan.text) {
+    if (plan.text && entry) {
       ownOutputs.add(plan.text.outfile);
-      ownOutputs.add(await entryPath(plan.text.outfile));
+      ownOutputs.add(entry);
     }
   };
 

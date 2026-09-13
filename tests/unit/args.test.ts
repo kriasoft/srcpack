@@ -63,6 +63,17 @@ describe("parseCliArgs", () => {
     });
   });
 
+  test("should add a scheme even when the URL embeds another one", () => {
+    const source = parseCliArgs([
+      "--screenshot",
+      "localhost:5173/?next=https://example.com",
+    ]).adHoc?.source;
+
+    expect(source).toMatchObject({
+      screenshot: { url: "http://localhost:5173/?next=https://example.com" },
+    });
+  });
+
   test("should reject a malformed screenshot request", () => {
     expect(() => parseCliArgs(["--viewport", "mobile"])).toThrow(
       "--viewport applies to --screenshot <url>.",

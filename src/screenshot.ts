@@ -305,15 +305,20 @@ async function capturePage(
   await settle(page, network, warn);
 
   // In-page code is passed as strings: srcpack is typed without DOM globals.
-  // `clientWidth` is the layout viewport — 980 px for a page without
-  // `<meta name="viewport">` under mobile emulation, as on a real phone.
+  //
+  // Width is the layout viewport — 980 px for a page without
+  // `<meta name="viewport">` under mobile emulation, as on a real phone — not
+  // the scroll width: accidental horizontal overflow would otherwise widen
+  // every slice past the text budget. Height is what window scrolling reaches,
+  // the same element `settle` scrolled; an app that scrolls inside its own
+  // container has nothing further down to slice.
   const { width, height, dpr } = await page.evaluate<{
     width: number;
     height: number;
     dpr: number;
   }>(`({
     width: document.documentElement.clientWidth,
-    height: Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight ?? 0),
+    height: (document.scrollingElement ?? document.documentElement).scrollHeight,
     dpr: devicePixelRatio,
   })`);
 
@@ -435,7 +440,10 @@ export interface RequestEvents {
  * Quiet is measured from the last request event, not sampled: a request that
  * starts and finishes between two polls still restarts the window.
  */
-export function watchNetwork(page: RequestEvents): NetworkWatch {
+export function watchNetwork(
+  page: RequestEvents,
+  { quiet = NETWORK_QUIET, cap = NETWORK_IDLE } = {},
+): NetworkWatch {
   const inflight = new Set<unknown>();
   let lastActivity = Date.now();
   page.on("request", (request) => {
@@ -451,10 +459,9 @@ export function watchNetwork(page: RequestEvents): NetworkWatch {
 
   return {
     async idle() {
-      const deadline = Date.now() + NETWORK_IDLE;
+      const deadline = Date.now() + cap;
       while (Date.now() < deadline) {
-        const quiet = Date.now() - lastActivity;
-        if (!inflight.size && quiet >= NETWORK_QUIET) return;
+        if (!inflight.size && Date.now() - lastActivity >= quiet) return;
         await delay(Math.min(50, deadline - Date.now()));
       }
     },

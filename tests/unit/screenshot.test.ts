@@ -251,37 +251,42 @@ describe("launchBrowser", () => {
 });
 
 describe("watchNetwork", () => {
+  const quiet = 100;
+
   test("should wait out requests that start and finish between polls", async () => {
     const events = new EventEmitter();
-    const network = watchNetwork(events);
-    const started = Date.now();
+    const network = watchNetwork(events, { quiet, cap: 5_000 });
 
     // Each request completes within one tick, so sampling how many are in
-    // flight would never see one and call the page idle after 500 ms
-    let n = 0;
+    // flight would never see one. Measured against the last request actually
+    // sent, so a slow timer can't make a correct wait look early.
+    let lastRequest = 0;
     const timer = setInterval(() => {
-      const request = { id: n++ };
+      const request = {};
+      lastRequest = Date.now();
       events.emit("request", request);
       events.emit("requestfinished", request);
-    }, 100);
-    setTimeout(() => clearInterval(timer), 1000);
+    }, 20);
+    const stopped = Bun.sleep(300).then(() => clearInterval(timer));
 
     await network.idle();
+    const idleAt = Date.now();
+    await stopped;
 
-    // Last request near 1,000 ms, then the 500 ms quiet window
-    expect(Date.now() - started).toBeGreaterThanOrEqual(1400);
+    // Resolving while requests were still arriving would put one after idleAt
+    expect(idleAt - lastRequest).toBeGreaterThanOrEqual(quiet);
   });
 
-  test("should not wait for a request that never finishes past the cap", async () => {
+  test("should give up on a request that never finishes at the cap", async () => {
     const events = new EventEmitter();
-    const network = watchNetwork(events);
+    const network = watchNetwork(events, { quiet, cap: 300 });
     events.emit("request", {});
 
     const started = Date.now();
     await network.idle();
 
-    expect(Date.now() - started).toBeGreaterThanOrEqual(4900);
-  }, 10_000);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(300);
+  });
 });
 
 describe("packageManager", () => {
