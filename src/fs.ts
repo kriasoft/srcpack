@@ -53,7 +53,7 @@ export async function physicalPath(path: string): Promise<string> {
  * Where `rename` puts a directory entry: ancestors resolved, the entry itself
  * left alone. Writing replaces the entry instead of following it, so a bundle
  * whose output is a symlink is identified as the link rather than its target —
- * two bundles writing over one link's target are still two separate files.
+ * writing to the link path and to its target produces two separate files.
  */
 export async function entryPath(path: string): Promise<string> {
   return join(await physicalPath(dirname(path)), basename(path));

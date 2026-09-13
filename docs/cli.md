@@ -108,6 +108,8 @@ These build a one-off bundle from the current change set and need no config file
 
 Ad-hoc bundles stay local: they are never uploaded, even with Google Drive configured. Declare a named bundle to publish changes.
 
+One-off flags use the discovered config's `root` and `outDir`, but replace the source definition of any configured bundle with the same name. For example, `--screenshot` replaces the images of a configured bundle named `screenshot`. Output collisions with differently named bundles are rejected.
+
 For a permanent version with review instructions attached, put a [git source](./configuration.md#git-sources-git-prefix) in your config instead.
 
 **A page, as images:**
@@ -182,10 +184,12 @@ Opens a browser to authorize access. Tokens are stored in `~/.config/srcpack/cre
 | `--viewport <name>`  | `desktop` (default) or `mobile`, with `--screenshot` |
 | `--dry-run`          | Preview bundles without writing files                |
 | `--emptyOutDir`      | Empty the output directory before writing            |
-| `--no-emptyOutDir`   | Keep what is already in the output directory         |
+| `--no-emptyOutDir`   | Skip clearing the output directory                   |
 | `--no-upload`        | Bundle only, skip upload                             |
 | `-h`, `--help`       | Show help                                            |
 | `-v`, `--version`    | Show version                                         |
+
+`--no-emptyOutDir` disables directory-wide clearing; bundles still replace their outputs and remove stale files from their own previous output. See [output cleanup](./configuration.md#outdir).
 
 The one-off flags (`--staged`, `--dirty`, `--since`, `--screenshot`) cannot be combined with each other or with bundle names. `--viewport` applies only to `--screenshot`; set the viewport in config for a named bundle.
 

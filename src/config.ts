@@ -235,10 +235,8 @@ const ConfigSchema = z
     bundles: z.record(BundleNameSchema, BundleConfigSchema),
   })
   .superRefine((config, ctx) => {
-    // `upload.exclude` is the only thing keeping a bundle off Google Drive, so a
-    // name that matches nothing uploads the bundle it was meant to hold back —
-    // the one failure mode where a typo is worse than a missing line. A stale
-    // entry left over from a deleted bundle is cheap to fix by comparison.
+    // Reject misspelled exclusions so a bundle intended to stay local cannot
+    // silently upload. Removed bundles must also be removed from this list.
     const uploads = config.upload
       ? Array.isArray(config.upload)
         ? config.upload

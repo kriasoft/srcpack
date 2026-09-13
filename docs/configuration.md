@@ -83,7 +83,9 @@ Ownership is decided by physical path. A `.srcpack` that turns out to be a symli
 
 Emptying waits until every bundle has resolved, immediately before the new files are written. A run that fails while resolving — an unreadable `.gitignore`, an expired `LINEAR_API_KEY` — leaves the previous output intact.
 
-Emptying only happens on a full run. `srcpack web` leaves the bundles it isn't building in place, since it has no way to tell which of them are stale.
+Named runs (`srcpack web`) never empty the directory. One-off runs (`--staged`, `--dirty`, `--since`, `--screenshot`) empty it only when you pass `--emptyOutDir`, regardless of the config setting.
+
+`emptyOutDir: false` and `--no-emptyOutDir` disable directory-wide clearing. Selected bundles still replace their outputs, remove stale numbered images, and remove empty text outputs inside `outDir`.
 
 ## Bundle Definitions
 
@@ -397,7 +399,7 @@ The string form `screenshot: "http://…"` is shorthand for `{ url: "http://…"
 ### Notes
 
 - **The page is scrolled before capture**, so lazy images and content that appears on scroll are rendered. Sections that grow as they load are followed down, and at the bottom srcpack waits for 500 ms of network quiet, capped at 5 seconds per wait, and keeps scrolling if requests added content. It stops after 50 viewports or 15 seconds and warns that content further down may not have loaded.
-- **Framework dev toolbars are hidden** automatically (Astro, Nuxt). Next.js is left alone: its `nextjs-portal` also shows build and runtime errors, which a review should see. Use `hide` to suppress `"nextjs-portal"` or selectors for cookie banners and chat widgets. Hiding happens in the capture's own stylesheet; the page itself isn't changed.
+- **Framework dev toolbars are hidden** automatically (Astro, Nuxt). Next.js is left alone: its `nextjs-portal` also shows build and runtime errors, which a review should see. Use `hide` to suppress `"nextjs-portal"` or selectors for cookie banners and chat widgets. Elements are hidden during capture with `visibility: hidden`, preserving their layout space.
 - **A page that doesn't load fails the run**: an unreachable URL, a non-2xx status, or navigation that does not finish loading within 30 seconds. A screenshot of a 404 page would look like success. The previous run's images are left untouched.
 - **Stale images are removed.** When a page shrinks from six images to four, `-04` and `-05` are deleted, so an old slice is never attached with the new set.
 - **The URL needs a scheme** in config: `"localhost:5173"` is an error. (`--screenshot` on the command line adds `http://` for you.)

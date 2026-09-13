@@ -162,7 +162,7 @@ Options:
   --viewport <name>    desktop (default) or mobile, with --screenshot
   --dry-run            Preview bundles without writing files
   --emptyOutDir        Empty output directory before writing
-  --no-emptyOutDir     Keep existing files in output directory
+  --no-emptyOutDir     Skip clearing the output directory
   --no-upload          Skip uploading to cloud storage
   -h, --help           Show this help message
   -v, --version        Show version
@@ -340,13 +340,9 @@ Options:
     for (const warning of warnings) console.warn(warning);
   }
 
-  // Empty outDir only once every bundle has resolved, and only for a full run:
-  // a named subset can't tell what is stale, so `srcpack web` must not delete
-  // api.txt. Emptying earlier would destroy a good previous run whenever a
-  // later bundle fails — routine once a source is remote, since an expired
-  // token or a rate limit aborts the run after outDir is already gone.
-  // Resolution doesn't need the files removed first: `ownOutputs` already keeps
-  // srcpack's own output from being bundled.
+  // Clear only after all sources resolve, preserving prior output on failure.
+  // Named runs keep other bundles; ad-hoc runs reach this only with an explicit
+  // --emptyOutDir. `ownOutputs` excludes prior output during resolution.
   if (emptyOutDir && !dryRun && requestedBundles.length === 0) {
     await emptyDirectory(outDirPath, [".git"]);
   }
@@ -389,8 +385,7 @@ Options:
           console.log(`    ${entry.path}`);
         }
       } else if (fileCount === 0) {
-        // Drop a previous run's file so the bundle never goes stale, but only
-        // inside outDir — a custom outfile points at a location srcpack doesn't own
+        // Remove stale text only inside outDir; custom outfiles outside it survive.
         if (isInside(outPath, outDirPath)) {
           await rm(outPath, { force: true });
         }

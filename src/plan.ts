@@ -11,12 +11,10 @@ import {
   type ScreenshotTarget,
 } from "./screenshot.ts";
 
-// A run is split by phase. Selection, collision checks and own-output exclusion
-// read `PlannedBundle`; writing, reporting and upload read `ResolvedBundle`.
-// Destinations are derived once, and collisions fail before any source resolves
-// or a browser launches.
+// Check output destinations before resolving sources or launching a browser.
+// Retain each active plan through writing, reporting and upload.
 
-/** Where a bundle writes, derived from config once. */
+/** Where a bundle writes. */
 export interface PlannedBundle {
   name: string;
   source: BundleConfig;
@@ -103,8 +101,7 @@ function planBundle(
     const outfile = object?.outfile ?? join(outDir, `${name}.txt`);
     plan.text = { outfile: resolve(root, outfile) };
   }
-  // No `outfile` for images: they stay in outDir, so replacing stale ones
-  // never reaches a directory srcpack doesn't own
+  // Keep image cleanup within outDir, independent of any text outfile.
   if (object?.screenshot) {
     plan.images = {
       target: toScreenshotTarget(object.screenshot),
@@ -188,13 +185,9 @@ function collision(first: Claim, second: Claim, root: string): ConfigError {
 /**
  * Derive where every bundle writes and reject two bundles sharing a file.
  *
- * Sharing is silent loss: the second write replaces the first, and upload then
- * sends the survivor twice under two names. Destinations are folded with
- * `pathKey` — `.srcpack/a.txt` and `alias/a.txt` are one file once `alias`
- * links to `.srcpack`, and so are `Web.txt` and `web.txt` wherever the
- * filesystem folds case. A text file collides with an image family when it
- * sits in the family's directory under one of its numbered names, the same
- * bundle's family included.
+ * Resolve directory aliases and compare destinations with `pathKey` to prevent
+ * silent overwrites. Text files also collide with numbered images in the same
+ * directory, including their own bundle's images.
  *
  * Configured bundles are checked against each other on every run, so a config
  * error doesn't depend on what was asked for. Active bundles — the ones `active`

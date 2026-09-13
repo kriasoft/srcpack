@@ -57,7 +57,7 @@ Or add to `package.json`:
 | `bundles`     | —          | Named bundle definitions              |
 | `upload`      | —          | Upload destination(s)                 |
 
-\*Only the default `.srcpack` is emptied automatically — it's srcpack's directory by convention. Any other `outDir` needs an explicit `emptyOutDir: true`, so `outDir: "src"` can't quietly delete your sources. Emptying also happens only on a full run, so `npx srcpack web` leaves other bundles in place.
+\*Only the default `.srcpack` is emptied automatically — it's srcpack's directory by convention. Any other `outDir` needs an explicit `emptyOutDir: true`, so `outDir: "src"` can't quietly delete your sources. Named runs (`npx srcpack web`) never empty it, so other bundles stay in place.
 
 ### Bundle Config
 
@@ -178,7 +178,7 @@ npx srcpack --since main    # Bundle changes since main
 npx srcpack --screenshot localhost:5173 # Capture a page as PNGs
 npx srcpack --dry-run       # Preview without writing files
 npx srcpack --emptyOutDir   # Empty output directory before writing
-npx srcpack --no-emptyOutDir # Keep existing files in output directory
+npx srcpack --no-emptyOutDir # Skip clearing the output directory
 npx srcpack --no-upload     # Bundle only, skip upload
 npx srcpack init            # Interactive config setup
 npx srcpack login           # Authenticate with Google Drive
