@@ -20,6 +20,8 @@ jobs:
         with:
           node-version: "24"
       - run: bun install --frozen-lockfile
+      # Screenshot e2e tests drive a real browser
+      - run: bunx playwright install --with-deps chromium
       - run: bun run check
       - run: bun prettier --check .
       - run: bun test tests/unit/ tests/e2e/

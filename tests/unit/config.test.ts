@@ -515,6 +515,94 @@ describe("parseConfig", () => {
   });
 });
 
+describe("screenshot source", () => {
+  const messageOf = (bundles: Record<string, unknown>): string => {
+    try {
+      parseConfig({ bundles });
+    } catch (e) {
+      return (e as ConfigError).message;
+    }
+    throw new Error("should have thrown");
+  };
+
+  test("should accept the URL shorthand and the object form", () => {
+    const config = parseConfig({
+      bundles: {
+        home: { screenshot: "http://localhost:5173/", onDemand: true },
+        phone: {
+          screenshot: {
+            url: "https://example.com/pricing",
+            viewport: "mobile",
+            hide: ["#cookie-banner"],
+          },
+        },
+      },
+    });
+
+    expect(config.bundles.home).toEqual({
+      screenshot: "http://localhost:5173/",
+      onDemand: true,
+    });
+    expect(config.bundles.phone).toMatchObject({
+      screenshot: { viewport: "mobile", hide: ["#cookie-banner"] },
+    });
+  });
+
+  test("should name a missing scheme rather than a bad protocol", () => {
+    // `new URL("localhost:5173")` parses, as protocol `localhost:`
+    expect(messageOf({ home: { screenshot: "localhost:5173" } })).toBe(
+      'bundles.home.screenshot: URL needs a scheme, e.g. "http://localhost:5173/"',
+    );
+    expect(messageOf({ home: { screenshot: { url: "localhost:5173" } } })).toBe(
+      'bundles.home.screenshot.url: URL needs a scheme, e.g. "http://localhost:5173/"',
+    );
+  });
+
+  test("should reject non-http URLs and unknown options", () => {
+    expect(messageOf({ home: { screenshot: "ftp://example.com/" } })).toBe(
+      "bundles.home.screenshot: Expected an http(s) URL",
+    );
+    expect(
+      messageOf({ home: { screenshot: { url: "http://x/", wait: 1 } } }),
+    ).toBe('bundles.home.screenshot: Unrecognized key: "wait"');
+    expect(
+      messageOf({ home: { screenshot: { url: "http://x/", viewport: "tv" } } }),
+    ).toContain("bundles.home.screenshot.viewport");
+  });
+
+  test.each([
+    ["prompt", "Review this."],
+    ["index", false],
+    ["outfile", "home.txt"],
+  ])("should reject %p on a screenshot-only bundle", (key, value) => {
+    expect(
+      messageOf({ home: { screenshot: "http://x/", [key]: value } }),
+    ).toStartWith(`bundles.home.${key}: "${key}" applies to the text file`);
+  });
+
+  test("should accept text options once the bundle also writes text", () => {
+    const config = parseConfig({
+      bundles: {
+        pricing: {
+          include: "src/pages/pricing/**/*",
+          screenshot: "http://localhost:5173/pricing",
+          prompt:
+            "Review this implementation against the attached screenshots.",
+          index: false,
+        },
+      },
+    });
+
+    expect(config.bundles.pricing).toMatchObject({ index: false });
+  });
+
+  test("should still require some source", () => {
+    expect(messageOf({ web: { onDemand: true } })).toContain(
+      '"include" patterns, "linear", or "screenshot"',
+    );
+  });
+});
+
 describe("defineConfig", () => {
   test("should return config unchanged", () => {
     const input: ConfigInput = {
