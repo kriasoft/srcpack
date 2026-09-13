@@ -201,7 +201,7 @@ Each issue becomes its own indexed entry (`linear/issues/ENG-123.md`). Set `LINE
 ::: code-group
 
 ```sh [npm]
-npx srcpack              # Bundle all
+npx srcpack              # Bundle all except on-demand
 npx srcpack web api      # Bundle specific bundles only
 npx srcpack --staged     # Bundle staged changes (no config needed)
 npx srcpack --dry-run    # Preview without writing
@@ -209,7 +209,7 @@ npx srcpack --no-upload  # Skip upload even if configured
 ```
 
 ```sh [bun]
-bunx srcpack              # Bundle all
+bunx srcpack              # Bundle all except on-demand
 bunx srcpack web api      # Bundle specific bundles only
 bunx srcpack --staged     # Bundle staged changes (no config needed)
 bunx srcpack --dry-run    # Preview without writing
@@ -217,7 +217,7 @@ bunx srcpack --no-upload  # Skip upload even if configured
 ```
 
 ```sh [pnpm]
-pnpm dlx srcpack              # Bundle all
+pnpm dlx srcpack              # Bundle all except on-demand
 pnpm dlx srcpack web api      # Bundle specific bundles only
 pnpm dlx srcpack --staged     # Bundle staged changes (no config needed)
 pnpm dlx srcpack --dry-run    # Preview without writing
@@ -225,7 +225,7 @@ pnpm dlx srcpack --no-upload  # Skip upload even if configured
 ```
 
 ```sh [yarn]
-yarn dlx srcpack              # Bundle all
+yarn dlx srcpack              # Bundle all except on-demand
 yarn dlx srcpack web api      # Bundle specific bundles only
 yarn dlx srcpack --staged     # Bundle staged changes (no config needed)
 yarn dlx srcpack --dry-run    # Preview without writing

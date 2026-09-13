@@ -83,7 +83,9 @@ Ownership is decided by physical path. A `.srcpack` that turns out to be a symli
 
 Emptying waits until every bundle has resolved, immediately before the new files are written. A run that fails while resolving — an unreadable `.gitignore`, an expired `LINEAR_API_KEY` — leaves the previous output intact.
 
-Emptying only happens on a full run. `srcpack web` leaves the bundles it isn't building in place, since it has no way to tell which of them are stale.
+Named runs (`srcpack web`) never empty the directory. One-off runs (`--staged`, `--dirty`, `--since`, `--screenshot`) empty it only when you pass `--emptyOutDir`, regardless of the config setting.
+
+`emptyOutDir: false` and `--no-emptyOutDir` disable directory-wide clearing. Selected bundles still replace their outputs, remove stale numbered images, and remove empty text outputs inside `outDir`.
 
 ## Bundle Definitions
 
@@ -125,13 +127,34 @@ bundles: {
 | --- | --- | --- | --- |
 | `include` | `string \| string[]` | — | Glob pattern(s) |
 | `linear` | `string \| object` | — | Linear issues (see below) |
+| `screenshot` | `string \| object` | — | Page captured as PNGs (see below) |
 | `outfile` | `string` | `{outDir}/{name}.txt` | Custom output path |
 | `index` | `boolean` | `true` | Include index header |
 | `prompt` | `string` | — | Text or file path (`./`, `~/`) to prepend |
+| `onDemand` | `boolean` | `false` | Build only when named (see below) |
 
-A bundle needs at least one source: `include`, `linear`, or both.
+A bundle needs at least one source: `include`, `linear`, `screenshot`, or any combination. `outfile`, `index` and `prompt` apply only to text and require `include` or `linear`. Images always go to `outDir`.
 
 Two bundles may not write to the same file. Names that differ only by case, or only in Unicode normalisation, count as the same file everywhere: on a case-insensitive filesystem — the default on macOS and Windows — `Web.txt` and `web.txt` are one directory entry, and APFS treats the two spellings of `Café` the same way, so one bundle would silently overwrite the other.
+
+### On-Demand Bundles
+
+A bundle that is slow, remote, or only occasionally useful can opt out of full runs:
+
+```ts
+bundles: {
+  code: "src/**/*",
+  backlog: { linear: "ENG", onDemand: true },
+}
+```
+
+| Command           | Builds                                    |
+| ----------------- | ----------------------------------------- |
+| `srcpack`         | every bundle without `onDemand: true`     |
+| `srcpack backlog` | `backlog`, on demand or not               |
+| `--dry-run`       | the same selection as the run it previews |
+
+A full run lists what it skipped (`On demand: backlog`). If every bundle is on demand, it writes no bundles and exits successfully; the same emptying rules still apply. A full run that empties `outDir` (by default, only `.srcpack` is emptied) removes an on-demand bundle's previous output there — run `srcpack`, then `srcpack backlog`.
 
 ## Pattern Syntax
 
@@ -282,6 +305,112 @@ Notes:
 - **`--dry-run` still calls the API**, because it has to in order to answer "what would this produce right now". There is no cache; a run without network access fails. Requests time out after 30 seconds.
 - **`linear/issues/` is reserved** once a bundle pulls issues. A file on disk at that path is an error: two entries would share one name, and an `!` exclusion drops both rather than choosing. Rename the file, or narrow the include patterns so it isn't matched.
 
+## Screenshots
+
+A bundle can capture a rendered page as PNG images a vision model can actually read — on its own, or next to the code that renders it:
+
+```ts
+bundles: {
+  home: { screenshot: "http://localhost:5173/", onDemand: true },
+
+  "home-mobile": {
+    screenshot: {
+      url: "http://localhost:5173/",
+      viewport: "mobile",
+      hide: ["#cookie-banner", ".intercom-launcher"],
+    },
+    onDemand: true,
+  },
+
+  // Implementation and rendered result under one name
+  pricing: {
+    include: "src/pages/pricing/**/*",
+    screenshot: "http://localhost:5173/pricing",
+    prompt: "Review this implementation against the attached screenshots.",
+    onDemand: true,
+  },
+}
+```
+
+```console
+$ srcpack home home-mobile
+  home         4 images  page 1440×6,210  → .srcpack/home-00.png … home-03.png
+  home-mobile  11 images  page 412×9,480  → .srcpack/home-mobile-00.png … home-mobile-10.png
+
+Bundled: 2 bundles, 15 images
+```
+
+Then drag `.srcpack/home-*.png` into ChatGPT, in filename order. A mixed bundle like `pricing` writes its text file and its images, and prints a line for each.
+
+`onDemand: true` keeps a full `srcpack` from failing whenever the dev server isn't running — see [On-Demand Bundles](#on-demand-bundles).
+
+### Setup
+
+Screenshots use [Playwright](https://playwright.dev), which srcpack doesn't install for you — most projects never need a browser:
+
+::: code-group
+
+```sh [npm]
+npm install -D playwright && npx playwright install chromium
+```
+
+```sh [bun]
+bun add -d playwright && bunx playwright install chromium
+```
+
+```sh [pnpm]
+pnpm add -D playwright && pnpm exec playwright install chromium
+```
+
+```sh [yarn]
+yarn add -D playwright && yarn playwright install chromium
+```
+
+:::
+
+A project that already uses Playwright Test needs nothing new. Without Playwright's Chromium, srcpack uses your installed Google Chrome. Playwright 1.41 or a later 1.x is required.
+
+### Filenames
+
+| File                          | Contains                                 |
+| ----------------------------- | ---------------------------------------- |
+| `<name>-00.png`               | The whole page, for layout               |
+| `<name>-01.png`, `-02.png`, … | Overlapping detail slices, top to bottom |
+
+Vision models scale every image down to a fixed pixel budget, so a tall page captured whole arrives as a thumbnail. Detail slices stay readable after that: they are at most 2,200 device pixels tall and overlap by about 160, so text cut at one edge is whole in the next; a page just over one slice becomes two shorter slices rather than two near-copies. A page that fits in one slice produces only `<name>-00.png`. If the highest image index exceeds 99, all filenames use wider zero-padding (`-000.png`, `-001.png`, …) to preserve filename order.
+
+The overview is best-effort. If a very tall page can't be captured whole, or its image would exceed ChatGPT's 20 MB per-image limit, srcpack warns and writes the detail slices alone, starting at `-01`. Those still cover the whole page.
+
+### Options
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `url` | `string` | — | Required. An `http://` or `https://` URL |
+| `viewport` | `"desktop" \| "mobile"` | `"desktop"` | Viewport preset (below) |
+| `hide` | `string[]` | — | CSS selectors hidden during capture |
+
+The string form `screenshot: "http://…"` is shorthand for `{ url: "http://…" }`.
+
+| Viewport | CSS size | Pixel ratio | Emulation |
+| --- | --- | --- | --- |
+| `desktop` | 1440×900 | 1 | — |
+| `mobile` | 412×839 | 2 | Pixel 7 user agent, touch, mobile layout |
+
+### Notes
+
+- **The page is scrolled before capture**, so lazy images and content that appears on scroll are rendered. Sections that grow as they load are followed down, and at the bottom srcpack waits for 500 ms of network quiet, capped at 5 seconds per wait, and keeps scrolling if requests added content. It stops after 50 viewports or 15 seconds and warns that content further down may not have loaded.
+- **Framework dev toolbars are hidden** automatically (Astro, Nuxt). Next.js is left alone: its `nextjs-portal` also shows build and runtime errors, which a review should see. Use `hide` to suppress `"nextjs-portal"` or selectors for cookie banners and chat widgets. Elements are hidden during capture with `visibility: hidden`, preserving their layout space.
+- **A page that doesn't load fails the run**: an unreachable URL, a non-2xx status, or navigation that does not finish loading within 30 seconds. A screenshot of a 404 page would look like success. The previous run's images are left untouched.
+- **Stale images are removed.** When a page shrinks from six images to four, `-04` and `-05` are deleted, so an old slice is never attached with the new set.
+- **The URL needs a scheme** in config: `"localhost:5173"` is an error. (`--screenshot` on the command line adds `http://` for you.)
+- **Images stay local.** A configured upload skips them and says so; a mixed bundle's text file still uploads.
+- **`--dry-run` doesn't open the page.** It lists the URL, viewport and destination; how many images a page produces is only known after rendering it.
+- **A page without `<meta name="viewport">`** lays out 980 CSS pixels wide under `mobile`, as it would on a real phone. If a mobile capture looks like the desktop site, that's why.
+- **Output collisions are rejected**, including screenshot bundle names that differ only by case and a text `outfile` that lands in `outDir` under any bundle's numbered image name, even its own. Checks cover all configured bundles, including those skipped by this run.
+- **Virtualized lists and content that disappears once scrolled past** may be missing: the page is scrolled to load content, then captured from the top.
+- **A page that scrolls inside its own container** (the window never scrolls) is captured as a single viewport.
+- **Pages behind a login aren't supported yet.**
+
 ## Automatic Exclusions
 
 Srcpack skips:
@@ -289,7 +418,7 @@ Srcpack skips:
 - Files matching `.gitignore` — including `node_modules/`, build output, and secrets, since those are already ignored in any normal project. Nested `.gitignore` files count too, resolved the way git resolves them: the rule in the deepest directory wins, and nothing under an ignored directory is re-included. A monorepo's `packages/app/.gitignore` hides its `.env` here exactly as it does for git.
 - Binary files (images, fonts, compiled assets), detected by content
 - Symlinks, so a link can't pull in a file from outside the project — including symlinked directories, which are not walked into
-- Its own output — `outDir` and every configured `outfile`. Otherwise a rerun would bundle the previous run's file, nesting it again each time.
+- Its own output — every configured or active text output, plus `outDir` unless it contains the project root. In that case, excluding the whole directory would also exclude the sources; individual text outputs remain excluded and PNGs are skipped as binary.
 
 Everything else matched by a pattern is included, so exclude what you don't want explicitly: `["src/**/*", "!bun.lock"]`.
 

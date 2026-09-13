@@ -78,6 +78,45 @@ const LinearSourceSchema = z.union([
 ]);
 
 /**
+ * An absolute http(s) URL. A scheme-less `localhost:5173` is called out by
+ * name: `URL` would otherwise parse it as protocol `localhost:`.
+ */
+const HttpUrlSchema = z.string().superRefine((value, ctx) => {
+  if (!value.includes("://")) {
+    ctx.addIssue({
+      code: "custom",
+      message: 'URL needs a scheme, e.g. "http://localhost:5173/"',
+    });
+  } else if (!/^https?:\/\//i.test(value) || !URL.canParse(value)) {
+    ctx.addIssue({ code: "custom", message: "Expected an http(s) URL" });
+  }
+});
+
+/**
+ * A rendered page as numbered PNGs in `outDir`, independent of the text
+ * output path. See ADR 006 for why it is a separate source key.
+ *
+ * @example
+ * ```ts
+ * bundles: {
+ *   home: { screenshot: "http://localhost:5173/", onDemand: true },
+ *   phone: { screenshot: { url: "http://localhost:5173/", viewport: "mobile" } },
+ * }
+ * ```
+ */
+const ScreenshotSourceSchema = z.union([
+  /** Shorthand for `{ url: "<url>" }`. */
+  HttpUrlSchema,
+  z.strictObject({
+    url: HttpUrlSchema,
+    /** Defaults to "desktop". */
+    viewport: z.enum(["desktop", "mobile"]).optional(),
+    /** CSS selectors hidden during capture: cookie banners, chat widgets. */
+    hide: z.array(z.string().min(1)).optional(),
+  }),
+]);
+
+/**
  * Bundle configuration. Accepts a string pattern, array of patterns, or object.
  * Patterns prefixed with `!` are exclusions. Patterns prefixed with `+` force
  * inclusion (bypass .gitignore).
@@ -86,7 +125,8 @@ const LinearSourceSchema = z.union([
  * `git:unstaged`, `git:untracked`, `git:dirty`, or `git:<rev>` (e.g.
  * `git:main`, `git:HEAD~3`).
  *
- * The object form takes files (`include`), Linear issues (`linear`), or both.
+ * The object form takes files (`include`), Linear issues (`linear`), page
+ * screenshots (`screenshot`), or any combination.
  *
  * @example
  * ```ts
@@ -105,15 +145,46 @@ const BundleConfigSchema = z.union([
       include: PatternsSchema.optional(),
       /** Linear issues to include in the bundle. */
       linear: LinearSourceSchema.optional(),
+      /** Page to capture as numbered PNGs in `outDir`. */
+      screenshot: ScreenshotSourceSchema.optional(),
       /** Custom output file path. Defaults to `<outDir>/<bundleName>.txt`. */
       outfile: z.string().min(1).optional(),
-      /** Include file index header in output. Defaults to true. */
-      index: z.boolean().default(true),
+      /**
+       * Include file index header in output. Defaults to true — read as
+       * `index ?? true`, so screenshot-only bundles can reject an explicit value.
+       */
+      index: z.boolean().optional(),
       /** Text to prepend to bundle (e.g., review instructions for LLMs). */
       prompt: z.string().optional(),
+      /**
+       * Skipped by a full run, built when named: `srcpack <name>`. For bundles
+       * too slow, remote or situational to rebuild every time. A full run that
+       * empties `outDir` still removes their output there — preserving it
+       * would make emptying a growing list of exceptions (ADR 005).
+       */
+      onDemand: z.boolean().optional(),
     })
-    .refine((bundle) => bundle.include || bundle.linear, {
-      message: 'Bundle needs a source: "include" patterns, "linear", or both',
+    .superRefine((bundle, ctx) => {
+      if (bundle.include || bundle.linear) return;
+      if (!bundle.screenshot) {
+        ctx.addIssue({
+          code: "custom",
+          message:
+            'Bundle needs a source: "include" patterns, "linear", or "screenshot"',
+        });
+        return;
+      }
+      // These shape a text file that a screenshot-only bundle never writes, so
+      // setting one is a misunderstanding rather than a harmless no-op
+      for (const key of ["prompt", "index", "outfile"] as const) {
+        if (bundle[key] !== undefined) {
+          ctx.addIssue({
+            code: "custom",
+            path: [key],
+            message: `"${key}" applies to the text file, and a screenshot-only bundle writes none. Add "include" or "linear", or remove it`,
+          });
+        }
+      }
     }),
 ]);
 
@@ -164,10 +235,8 @@ const ConfigSchema = z
     bundles: z.record(BundleNameSchema, BundleConfigSchema),
   })
   .superRefine((config, ctx) => {
-    // `upload.exclude` is the only thing keeping a bundle off Google Drive, so a
-    // name that matches nothing uploads the bundle it was meant to hold back —
-    // the one failure mode where a typo is worse than a missing line. A stale
-    // entry left over from a deleted bundle is cheap to fix by comparison.
+    // Reject misspelled exclusions so a bundle intended to stay local cannot
+    // silently upload. Removed bundles must also be removed from this list.
     const uploads = config.upload
       ? Array.isArray(config.upload)
         ? config.upload
@@ -193,6 +262,7 @@ const ConfigSchema = z
 
 export type UploadConfig = z.infer<typeof UploadConfigSchema>;
 export type LinearSourceInput = z.input<typeof LinearSourceSchema>;
+export type ScreenshotSource = z.infer<typeof ScreenshotSourceSchema>;
 export type BundleConfig = z.infer<typeof BundleConfigSchema>;
 export type BundleConfigInput = z.input<typeof BundleConfigSchema>;
 export type Config = z.infer<typeof ConfigSchema>;

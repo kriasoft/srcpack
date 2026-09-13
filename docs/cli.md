@@ -50,7 +50,7 @@ yarn add -D srcpack
 
 ### `srcpack` (default)
 
-Bundle all configured bundles and upload if configured.
+Build configured bundles except those marked [`onDemand`](./configuration.md#on-demand-bundles), and upload their text files if configured.
 
 ::: code-group
 
@@ -94,6 +94,8 @@ yarn dlx srcpack web api
 
 :::
 
+Naming a bundle builds it even when it is marked [`onDemand`](./configuration.md#on-demand-bundles); a full run skips those and lists them after the summary.
+
 **Changed files only:**
 
 ```sh
@@ -102,11 +104,22 @@ npx srcpack --dirty           # staged + unstaged + untracked
 npx srcpack --since main      # everything you changed since main
 ```
 
-These build a one-off bundle from the current change set and need no config file — handy for handing a work-in-progress to an LLM. The bundle is named after the flag (`.srcpack/staged.txt`), other bundles in `outDir` are left alone, and nothing is written when there are no changes.
+These build a one-off bundle from the current change set and need no config file — handy for handing a work-in-progress to an LLM. The bundle is named after the flag (`.srcpack/staged.txt`), other bundles in `outDir` are left alone unless you pass `--emptyOutDir`, and nothing is written when there are no changes.
 
 Ad-hoc bundles stay local: they are never uploaded, even with Google Drive configured. Declare a named bundle to publish changes.
 
+One-off flags use the discovered config's `root` and `outDir`, but replace the source definition of any configured bundle with the same name. For example, `--screenshot` replaces the images of a configured bundle named `screenshot`. Output collisions with differently named bundles are rejected.
+
 For a permanent version with review instructions attached, put a [git source](./configuration.md#git-sources-git-prefix) in your config instead.
+
+**A page, as images:**
+
+```sh
+npx srcpack --screenshot localhost:5173/pricing
+npx srcpack --screenshot localhost:5173 --viewport mobile
+```
+
+Captures the page as numbered PNGs in `outDir` (by default `.srcpack/screenshot-00.png`, `screenshot-01.png`, …), with detail slices for tall pages. No config file is required. A URL without a scheme gets `http://`. Like the change-set flags, it leaves other files in `outDir` alone unless you pass `--emptyOutDir`, and never uploads. It needs Playwright — see [Screenshots](./configuration.md#screenshots), which also covers declaring a page you capture repeatedly.
 
 ### `srcpack init`
 
@@ -162,19 +175,25 @@ Opens a browser to authorize access. Tokens are stored in `~/.config/srcpack/cre
 
 ## Options
 
-| Option             | Description                                    |
-| ------------------ | ---------------------------------------------- |
-| `--staged`         | Bundle staged changes only                     |
-| `--dirty`          | Bundle staged, unstaged, and untracked changes |
-| `--since <rev>`    | Bundle changes since `<rev>`                   |
-| `--dry-run`        | Preview bundles without writing files          |
-| `--emptyOutDir`    | Empty the output directory before writing      |
-| `--no-emptyOutDir` | Keep what is already in the output directory   |
-| `--no-upload`      | Bundle only, skip upload                       |
-| `-h`, `--help`     | Show help                                      |
-| `-v`, `--version`  | Show version                                   |
+| Option               | Description                                          |
+| -------------------- | ---------------------------------------------------- |
+| `--staged`           | Bundle staged changes only                           |
+| `--dirty`            | Bundle staged, unstaged, and untracked changes       |
+| `--since <rev>`      | Bundle changes since `<rev>`                         |
+| `--screenshot <url>` | Capture a page as numbered PNGs                      |
+| `--viewport <name>`  | `desktop` (default) or `mobile`, with `--screenshot` |
+| `--dry-run`          | Preview bundles without writing files                |
+| `--emptyOutDir`      | Empty the output directory before writing            |
+| `--no-emptyOutDir`   | Skip clearing the output directory                   |
+| `--no-upload`        | Bundle only, skip upload                             |
+| `-h`, `--help`       | Show help                                            |
+| `-v`, `--version`    | Show version                                         |
 
-An unrecognized option is an error, not a no-op — `--no-uplaod` would otherwise upload, and `--dry-rnu` would write.
+`--no-emptyOutDir` disables directory-wide clearing; bundles still replace their outputs and remove stale files from their own previous output. See [output cleanup](./configuration.md#outdir).
+
+The one-off flags (`--staged`, `--dirty`, `--since`, `--screenshot`) cannot be combined with each other or with bundle names. `--viewport` applies only to `--screenshot`; set the viewport in config for a named bundle.
+
+An unrecognized option is an error, not a no-op — `--no-uplaod` would otherwise upload, and `--dry-rnu` would write. Values may follow a space or an `=`: `--since main` and `--since=main` are the same.
 
 ## Examples
 
@@ -213,7 +232,7 @@ Output:
 Dry run: 2 bundles, 4 files, 938 lines
 ```
 
-Each bundle lists the files it would contain, so you can check the shape of a pattern before anything is written; `outDir` is left alone too. A bundle that declares [`linear`](./configuration.md#linear-issues) still calls the API — the counts are what it would produce right now, which it can't know offline.
+Each bundle lists the files it would contain, so you can check the shape of a pattern before anything is written; `outDir` is left alone too. A bundle that declares [`linear`](./configuration.md#linear-issues) still calls the API — the counts are what it would produce right now, which it can't know offline. A [`screenshot`](./configuration.md#screenshots) source is listed with its URL, viewport and destination without launching a browser. A mixed bundle still resolves its text sources.
 
 ### Bundle without upload
 

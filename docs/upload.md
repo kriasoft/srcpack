@@ -1,6 +1,6 @@
 # Google Drive Upload
 
-Srcpack can automatically upload bundles to Google Drive, making them accessible from any device or shareable with your team.
+Srcpack can automatically upload bundle text files to Google Drive, making them accessible from any device or shareable with your team. [Screenshots](./configuration.md#screenshots) stay local; a mixed bundle uploads only its text file.
 
 ## Setup
 

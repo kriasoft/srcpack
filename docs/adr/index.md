@@ -10,3 +10,5 @@ A record is never rewritten once accepted. When a decision is reversed, a new re
 | [002](./002-minimum-node-version.md) | Node 22.18 as the minimum runtime | Accepted 2026-08-15 |
 | [003](./003-linear-issues-as-virtual-files.md) | Linear issues as virtual files, under a `linear` bundle key | Accepted 2026-08-15 |
 | [004](./004-path-boundaries.md) | What srcpack may read, delete and overwrite | Accepted 2026-08-15 |
+| [005](./005-on-demand-bundles.md) | `onDemand` bundles: skipped by a full run, built when named | Accepted 2026-09-13 |
+| [006](./006-screenshot-bundles.md) | Screenshots as a `screenshot` bundle source, written as numbered PNGs | Accepted 2026-09-13 |

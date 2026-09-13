@@ -20,6 +20,8 @@ jobs:
         with:
           node-version: "24"
       - run: bun install --frozen-lockfile
+      # Screenshot e2e tests drive a real browser
+      - run: bunx playwright install --with-deps chromium
       - run: bun run check
       - run: bun prettier --check .
       - run: bun test tests/unit/ tests/e2e/
@@ -38,6 +40,11 @@ jobs:
           npm init -y > /dev/null
           npm install "$RUNNER_TEMP"/srcpack-*.tgz > /dev/null
           echo 'export const x = 1;' > src/index.ts
-          printf 'import { defineConfig } from "srcpack";\nexport default defineConfig({ bundles: { app: "src/**/*" } });\n' > srcpack.config.mts
+          printf 'import { defineConfig } from "srcpack";\nexport default defineConfig({ bundles: { app: "src/**/*", home: { screenshot: "http://localhost:9/", onDemand: true } } });\n' > srcpack.config.mts
           ./node_modules/.bin/srcpack --dry-run | tee out.txt
           grep -q 'src/index.ts' out.txt
+          # Playwright is an optional peer, so it is absent here: a preview
+          # needs no browser, and a capture explains how to install one
+          ./node_modules/.bin/srcpack home --dry-run | grep -q 'home-NN.png'
+          if ./node_modules/.bin/srcpack home 2> err.txt; then exit 1; fi
+          grep -q 'screenshots need Playwright' err.txt

@@ -10,7 +10,7 @@ Zero-config CLI for bundling code into LLM-optimized context files.
 
 ```bash
 npx srcpack init         # Create config interactively
-npx srcpack              # Bundle all
+npx srcpack              # Bundle all except on-demand
 ```
 
 ## Why
@@ -57,7 +57,7 @@ Or add to `package.json`:
 | `bundles`     | —          | Named bundle definitions              |
 | `upload`      | —          | Upload destination(s)                 |
 
-\*Only the default `.srcpack` is emptied automatically — it's srcpack's directory by convention. Any other `outDir` needs an explicit `emptyOutDir: true`, so `outDir: "src"` can't quietly delete your sources. Emptying also happens only on a full run, so `npx srcpack web` leaves other bundles in place.
+\*Only the default `.srcpack` is emptied automatically — it's srcpack's directory by convention. Any other `outDir` needs an explicit `emptyOutDir: true`, so `outDir: "src"` can't quietly delete your sources. Named runs (`npx srcpack web`) never empty it, so other bundles stay in place.
 
 ### Bundle Config
 
@@ -78,15 +78,19 @@ Or add to `package.json`:
 {
   include: "src/**/*",
   linear: { team: "ENG" },             // Linear issues as virtual files
+  screenshot: "http://localhost:5173", // rendered page as numbered PNGs
   outfile: "~/Downloads/bundle.txt",   // custom output path
   index: true,                         // include index header (default)
-  prompt: "./prompts/review.md"        // prepend from file (or inline text)
+  prompt: "./prompts/review.md",       // prepend from file (or inline text)
+  onDemand: true                       // build only when named
 }
 ```
 
 Patterns follow glob syntax. Prefix with `!` to exclude, `+` to force-include (bypasses `.gitignore`). Binary files are excluded.
 
 A pattern can also name a set of changed files: `git:staged`, `git:unstaged`, `git:untracked`, `git:dirty`, or `git:<rev>` (e.g. `git:main`, `git:HEAD~3`). Deleted files are skipped, and `git:<rev>` compares against the merge base so a stale branch still reports only your own changes. See [Git sources](https://kriasoft.com/srcpack/configuration#git-sources-git-prefix).
+
+A full run skips bundles marked `onDemand: true`; name them explicitly to build them. Emptying `outDir` still removes their previous output there. See [On-Demand Bundles](https://kriasoft.com/srcpack/configuration#on-demand-bundles).
 
 ### Linear Issues
 
@@ -103,6 +107,18 @@ bundles: {
 ```
 
 Authentication reads `LINEAR_API_KEY` from the environment (Linear → Settings → Security & access → Personal API keys), never from the config file. `team` is required, completed/canceled/duplicate issues are excluded by default, and issues obey `!` exclusions like any other entry. See [Linear issues](https://kriasoft.com/srcpack/configuration#linear-issues).
+
+### Screenshots
+
+A bundle can capture a rendered page as PNGs, with overlapping detail slices for tall pages. Srcpack scrolls to load lazy content before capture and hides Astro and Nuxt dev toolbars.
+
+```typescript
+bundles: {
+  home: { screenshot: "http://localhost:5173/", onDemand: true },
+}
+```
+
+`npx srcpack home` writes PNGs to `.srcpack`: `home-00.png` is the whole page when available; tall pages also get `home-01.png`, `home-02.png`, … detail slices. Attach them in filename order. Images stay local, even with upload configured. For a one-off, no config is needed: `npx srcpack --screenshot localhost:5173 --viewport mobile`. See [Screenshots](https://kriasoft.com/srcpack/configuration#screenshots) for Playwright and browser setup.
 
 ### Google Drive Upload
 
@@ -154,14 +170,15 @@ import { utils } from "./utils";
 ## CLI
 
 ```bash
-npx srcpack                 # Bundle all, upload if configured
+npx srcpack                 # Bundle all except on-demand, upload if configured
 npx srcpack web api         # Bundle specific bundles only
 npx srcpack --staged        # Bundle staged changes (no config needed)
 npx srcpack --dirty         # Bundle staged + unstaged + untracked
 npx srcpack --since main    # Bundle changes since main
+npx srcpack --screenshot localhost:5173 # Capture a page as PNGs
 npx srcpack --dry-run       # Preview without writing files
 npx srcpack --emptyOutDir   # Empty output directory before writing
-npx srcpack --no-emptyOutDir # Keep existing files in output directory
+npx srcpack --no-emptyOutDir # Skip clearing the output directory
 npx srcpack --no-upload     # Bundle only, skip upload
 npx srcpack init            # Interactive config setup
 npx srcpack login           # Authenticate with Google Drive

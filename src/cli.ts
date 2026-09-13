@@ -1,33 +1,18 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: MIT
 
-import {
-  mkdir,
-  readdir,
-  readFile,
-  realpath,
-  rename,
-  rm,
-  writeFile,
-} from "node:fs/promises";
-import {
-  basename,
-  dirname,
-  isAbsolute,
-  join,
-  relative,
-  resolve,
-  sep,
-} from "node:path";
+import { mkdir, readdir, readFile, rm } from "node:fs/promises";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import ora from "ora";
-import { bundleOne, pathKey, type BundleResult } from "./bundle.ts";
+import { parseCliArgs, UsageError } from "./args.ts";
+import { bundleOne, type BundleResult } from "./bundle.ts";
 import {
   ConfigError,
   loadConfig,
   parseConfig,
-  type BundleConfig,
   type UploadConfig,
 } from "./config.ts";
+import { isInside, physicalPath, writeFileAtomic } from "./fs.ts";
 import {
   ensureAuthenticated,
   login,
@@ -38,12 +23,14 @@ import {
 import { GitError } from "./git.ts";
 import { runInit } from "./init.ts";
 import { LinearError } from "./linear.ts";
-
-interface BundleOutput {
-  name: string;
-  outfile: string;
-  result: BundleResult;
-}
+import { planOutputs, selectBundles, type ResolvedBundle } from "./plan.ts";
+import {
+  createCapturer,
+  imageFileName,
+  isImageOf,
+  ScreenshotError,
+  type CapturedPage,
+} from "./screenshot.ts";
 
 function sumLines(result: BundleResult): number {
   return result.index.reduce((sum, entry) => sum + entry.lines, 0);
@@ -57,70 +44,35 @@ function plural(n: number, singular: string, pluralForm?: string): string {
   return n === 1 ? singular : (pluralForm ?? singular + "s");
 }
 
+/**
+ * "3 bundles, 42 files, 3,120 lines, 15 images". Files and lines appear only
+ * when some bundle wrote text; images aren't counted in a dry run, which never
+ * renders them.
+ */
+function formatCounts(outputs: ResolvedBundle[]): string {
+  const texts = outputs.flatMap((o) => (o.text ? [o.text] : []));
+  const files = texts.reduce((sum, t) => sum + t.index.length, 0);
+  const lines = texts.reduce((sum, t) => sum + sumLines(t), 0);
+  const images = outputs.reduce(
+    (sum, o) => sum + (o.images?.images.length ?? 0),
+    0,
+  );
+  const counts = [`${outputs.length} ${plural(outputs.length, "bundle")}`];
+  if (texts.length) {
+    counts.push(
+      `${formatNumber(files)} ${plural(files, "file")}`,
+      `${formatNumber(lines)} ${plural(lines, "line")}`,
+    );
+  }
+  if (images) counts.push(`${formatNumber(images)} ${plural(images, "image")}`);
+  return counts.join(", ");
+}
+
 /** The directory srcpack owns by convention, and the only one it clears unasked. */
 const DEFAULT_OUT_DIR = ".srcpack";
 
 /**
- * Where a path physically is, with symlinks resolved. Destructive decisions are
- * made on this rather than the lexical path: `.srcpack -> ../shared` is inside
- * the project by name and somewhere else in fact, and it is the somewhere else
- * whose contents `rm` would take.
- *
- * Resolves as much of the path as exists, however deep that is. Stopping at the
- * immediate parent would call `.srcpack/nested/x.txt` and `alias/nested/x.txt`
- * different files until `mkdir -p` runs, which is one step too late to still be
- * a check: aliasing is a property of the ancestors, not of when they were made.
- */
-async function physicalPath(path: string): Promise<string> {
-  try {
-    return await realpath(path);
-  } catch {
-    const parent = dirname(path);
-    // dirname("/") === "/": nothing above the filesystem root left to resolve
-    if (parent === path) return path;
-    return join(await physicalPath(parent), basename(path));
-  }
-}
-
-/**
- * Where `rename` puts a directory entry: ancestors resolved, the entry itself
- * left alone. Writing replaces the entry instead of following it, so a bundle
- * whose output is a symlink is identified as the link rather than its target —
- * two bundles writing over one link's target are still two separate files.
- */
-async function entryPath(path: string): Promise<string> {
-  return join(await physicalPath(dirname(path)), basename(path));
-}
-
-function isInside(path: string, dir: string): boolean {
-  const rel = relative(dir, path);
-  // Compare against ".." as a whole segment — "..cache/x" is a child, not an escape
-  return rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
-}
-
-/**
- * Write a bundle by replacing the directory entry rather than the file behind
- * it. Writing in place follows a symlink sitting at the output path, so
- * `.srcpack/web.txt -> ~/.ssh/config` would be written through; rename replaces
- * the link itself. It also makes each file appear whole or not at all.
- *
- * The temp name carries the pid so two runs can't rename each other's file.
- */
-async function writeBundle(path: string, content: string): Promise<void> {
-  const temp = `${path}.${process.pid}.tmp`;
-  try {
-    await writeFile(temp, content);
-    await rename(temp, path);
-  } finally {
-    // A failed write or rename would otherwise leave a partial file behind:
-    // stale inside outDir, and bundled by the next run beside a custom outfile.
-    await rm(temp, { force: true });
-  }
-}
-
-/**
  * Empty a directory while preserving specified entries (e.g., `.git`).
- * Uses `force: true` to handle read-only or in-use files.
  */
 async function emptyDirectory(dir: string, skip: string[] = []): Promise<void> {
   let entries: string[];
@@ -144,83 +96,30 @@ async function emptyDirectory(dir: string, skip: string[] = []): Promise<void> {
 }
 
 /**
- * One-off bundle from a `git:` source instead of a configured one. Needs no
- * config file — reviewing what you just wrote is throwaway, not worth committing.
+ * Write a bundle's images, then remove the stale ones: a page that shrank from
+ * six images to four would otherwise leave `-04` and `-05` to be attached with
+ * the new set. Stale files match exactly, never folded — folding could only
+ * widen what gets deleted (ADR 004). Returns the paths written, in order.
  */
-interface AdHocBundle {
-  name: string;
-  patterns: string[];
-}
-
-const AD_HOC_FLAGS = ["--staged", "--dirty", "--since"] as const;
-
-/**
- * Every option the CLI accepts. Anything else is a typo, and a typo that gets
- * quietly dropped is the dangerous kind: `--no-uplaod` uploads, `--dry-rnu`
- * writes, `--no-emptyOutdir` empties. Same rule as the config — a token that
- * changes what a run destroys or publishes is never a silent no-op.
- */
-const KNOWN_FLAGS = new Set([
-  ...AD_HOC_FLAGS,
-  "--dry-run",
-  "--emptyOutDir",
-  "--no-emptyOutDir",
-  "--no-upload",
-  "--help",
-  "-h",
-  "--version",
-  "-v",
-]);
-
-function assertKnownFlags(args: string[]): void {
-  const unknown = args.find(
-    (arg) => arg.startsWith("-") && !KNOWN_FLAGS.has(arg),
+async function writeImages(
+  name: string,
+  dir: string,
+  captured: CapturedPage,
+): Promise<string[]> {
+  await mkdir(dir, { recursive: true });
+  const highest = Math.max(...captured.images.map((image) => image.index));
+  const written: string[] = [];
+  for (const { index, data } of captured.images) {
+    const path = join(dir, imageFileName(name, index, highest));
+    await writeFileAtomic(path, data);
+    written.push(path);
+  }
+  const current = new Set(written.map((path) => basename(path)));
+  const stale = (await readdir(dir)).filter(
+    (file) => isImageOf(name, file) && !current.has(file),
   );
-  if (unknown) {
-    console.error(`Unknown option: ${unknown}`);
-    console.error("Run `srcpack --help` to see the available options.");
-    process.exit(1);
-  }
-  if (args.includes("--emptyOutDir") && args.includes("--no-emptyOutDir")) {
-    console.error("Cannot combine --emptyOutDir with --no-emptyOutDir.");
-    process.exit(1);
-  }
-}
-
-function parseAdHocBundle(args: string[]): AdHocBundle | null {
-  const flags = AD_HOC_FLAGS.filter((flag) => args.includes(flag));
-
-  if (flags.length > 1) {
-    console.error(`Cannot combine ${flags.join(" and ")}.`);
-    process.exit(1);
-  }
-
-  switch (flags[0]) {
-    case "--staged":
-      return { name: "staged", patterns: ["git:staged"] };
-    case "--dirty":
-      return { name: "dirty", patterns: ["git:dirty"] };
-    case "--since": {
-      const rev = args[args.indexOf("--since") + 1];
-      if (!rev || rev.startsWith("-")) {
-        console.error("Missing revision: --since <rev> (e.g. --since main)");
-        process.exit(1);
-      }
-      // A range pins both endpoints, so it would silently drop the uncommitted
-      // work --since promises. Ranges belong in a config `git:` source.
-      if (rev.includes("..")) {
-        console.error(
-          `--since takes a revision, not a range: "${rev}". Use a git: source in your config for ranges.`,
-        );
-        process.exit(1);
-      }
-      // `git diff` can't see untracked files, but a new file written on this
-      // branch is part of "what changed since <rev>"
-      return { name: "since", patterns: [`git:${rev}`, "git:untracked"] };
-    }
-    default:
-      return null;
-  }
+  await Promise.all(stale.map((file) => rm(join(dir, file), { force: true })));
+  return written;
 }
 
 /** Resolves to the package root from both `src/cli.ts` and `dist/cli.js`. */
@@ -245,24 +144,28 @@ async function main() {
 srcpack - Bundle and upload tool
 
 Usage:
-  npx srcpack              Bundle all, upload if configured
-  npx srcpack web api      Bundle specific bundles only
-  npx srcpack --staged     Bundle staged changes (no config needed)
-  npx srcpack --dry-run    Preview bundles without writing files
-  npx srcpack --no-upload  Bundle only, skip upload
-  npx srcpack init         Interactive config setup
-  npx srcpack login        Authenticate with Google Drive
+  npx srcpack                  Bundle all except on-demand, upload if configured
+  npx srcpack web api          Bundle specific bundles only
+  npx srcpack --staged         Bundle staged changes (no config needed)
+  npx srcpack --screenshot localhost:5173
+                               Capture a page as PNGs (no config needed)
+  npx srcpack --dry-run        Preview bundles without writing files
+  npx srcpack --no-upload      Bundle only, skip upload
+  npx srcpack init             Interactive config setup
+  npx srcpack login            Authenticate with Google Drive
 
 Options:
-  --staged         Bundle staged changes only
-  --dirty          Bundle staged, unstaged, and untracked changes
-  --since <rev>    Bundle changes since <rev> (e.g. --since main)
-  --dry-run        Preview bundles without writing files
-  --emptyOutDir    Empty output directory before writing
-  --no-emptyOutDir Keep existing files in output directory
-  --no-upload      Skip uploading to cloud storage
-  -h, --help       Show this help message
-  -v, --version    Show version
+  --staged             Bundle staged changes only
+  --dirty              Bundle staged, unstaged, and untracked changes
+  --since <rev>        Bundle changes since <rev> (e.g. --since main)
+  --screenshot <url>   Capture a page as numbered PNGs
+  --viewport <name>    desktop (default) or mobile, with --screenshot
+  --dry-run            Preview bundles without writing files
+  --emptyOutDir        Empty output directory before writing
+  --no-emptyOutDir     Skip clearing the output directory
+  --no-upload          Skip uploading to cloud storage
+  -h, --help           Show this help message
+  -v, --version        Show version
 `);
     return;
   }
@@ -280,27 +183,13 @@ Options:
     return;
   }
 
-  assertKnownFlags(args);
-
-  const dryRun = args.includes("--dry-run");
-  const noUpload = args.includes("--no-upload");
-  // CLI flags: --emptyOutDir forces true, --no-emptyOutDir forces false
-  const emptyOutDirFlag = args.includes("--emptyOutDir")
-    ? true
-    : args.includes("--no-emptyOutDir")
-      ? false
-      : undefined;
-  const adHoc = parseAdHocBundle(args);
-  const sinceIndex = args.indexOf("--since");
-  const sinceValueIndex = sinceIndex === -1 ? -1 : sinceIndex + 1;
-  const requestedBundles = args.filter(
-    (arg, i) => !arg.startsWith("-") && i !== sinceValueIndex,
-  );
-
-  if (adHoc && requestedBundles.length) {
-    console.error(`Cannot combine --${adHoc.name} with named bundles.`);
-    process.exit(1);
-  }
+  const {
+    bundles: requestedBundles,
+    adHoc,
+    dryRun,
+    emptyOutDir: emptyOutDirFlag,
+    upload,
+  } = parseCliArgs(args);
 
   let config = await loadConfig();
 
@@ -315,23 +204,18 @@ Options:
     config = parseConfig({ bundles: {} });
   }
 
-  const bundles = adHoc ? { [adHoc.name]: adHoc.patterns } : config.bundles;
+  const bundles = adHoc ? { [adHoc.name]: adHoc.source } : config.bundles;
 
-  // Determine which bundles to process
-  const bundleNames = requestedBundles.length
-    ? requestedBundles
-    : Object.keys(bundles);
+  const { names: bundleNames, skipped } = selectBundles(
+    bundles,
+    requestedBundles,
+  );
+  const onDemandNote = skipped.length
+    ? `On demand: ${skipped.join(", ")}`
+    : undefined;
 
-  // Validate requested bundle names exist
-  for (const name of bundleNames) {
-    // hasOwn, not `in`: `srcpack toString` would otherwise find Object.prototype
-    if (!Object.hasOwn(bundles, name)) {
-      console.error(`Unknown bundle: ${name}`);
-      process.exit(1);
-    }
-  }
-
-  if (bundleNames.length === 0) {
+  // Every bundle on demand is still a full run: it goes on to empty outDir
+  if (bundleNames.length === 0 && !onDemandNote) {
     console.log("No bundles configured.");
     return;
   }
@@ -382,164 +266,190 @@ Options:
     );
   }
 
-  // srcpack never bundles what srcpack writes. Every configured outfile is
-  // named explicitly; outDir covers stale bundles from renamed config entries
-  // too, but not when it holds the root — that would exclude the whole project.
-  //
-  // Both spellings of every output are recorded. A glob rooted at a symlink
-  // yields lexical paths, one rooted at the real directory yields physical
-  // ones, and either can name a file the previous run wrote.
-  const ownOutputs = new Set<string>();
-  const writers = new Map<string, string>();
-  for (const [name, bundleConfig] of Object.entries(config.bundles)) {
-    const outfile = resolve(
-      root,
-      getOutfile(bundleConfig, name, config.outDir),
-    );
-    // Two bundles sharing one file is silent loss: the second write replaces the
-    // first, and the upload step then sends the survivor twice under two names.
-    // Keyed by destination entry — `.srcpack/a.txt` and `alias/a.txt` are two
-    // spellings of one file as soon as `alias` links to `.srcpack`, and so are
-    // `Web.txt` and `web.txt` wherever the filesystem folds case.
-    const entry = await entryPath(outfile);
-    const key = pathKey(entry);
-    const first = writers.get(key);
-    if (first) {
-      throw new ConfigError(
-        `Bundles "${first}" and "${name}" both write to "${relative(root, outfile) || outfile}". ` +
-          "Give one of them its own outfile.",
-      );
-    }
-    writers.set(key, name);
-    ownOutputs.add(outfile);
-    ownOutputs.add(entry);
-  }
-  if (!outDirHoldsRoot) {
-    ownOutputs.add(outDirPath);
-    ownOutputs.add(outDirPhysical);
-  }
-  const outputPaths = [...ownOutputs];
+  // srcpack never bundles what srcpack writes. Every output is named
+  // explicitly; outDir covers stale bundles from renamed config entries too,
+  // but not when it holds the root — that would exclude the whole project.
+  const { bundles: plans, ownOutputs } = await planOutputs(
+    root,
+    config.outDir,
+    config.bundles,
+    bundleNames.map((name) => [name, bundles[name]!]),
+  );
+  if (!outDirHoldsRoot) ownOutputs.push(outDirPath, outDirPhysical);
 
-  const outputs: BundleOutput[] = [];
+  const outputs: ResolvedBundle[] = [];
+  // Printed once the spinner stops, which would otherwise draw over them
+  const warnings: string[] = [];
+  // Images stay in memory until every bundle has resolved, so a failure in
+  // any capture leaves the previous run's files in place (ADR 003 run order).
+  // A dry run previews without a browser: counting images needs a render.
+  const capturer = createCapturer(root);
 
   // Process all bundles with progress
   const bundleSpinner = ora({
-    text: `Bundling ${bundleNames[0]}...`,
+    text: "Bundling...",
     color: "cyan",
   }).start();
 
   try {
-    for (let i = 0; i < bundleNames.length; i++) {
-      const name = bundleNames[i]!;
-      bundleSpinner.text = `Bundling ${name}... (${i + 1}/${bundleNames.length})`;
-      const bundleConfig = bundles[name]!;
-      let result: BundleResult;
+    for (let i = 0; i < plans.length; i++) {
+      const plan = plans[i]!;
+      const progress = `${plan.name}... (${i + 1}/${plans.length})`;
+      const output: ResolvedBundle = { plan };
       try {
-        result = await bundleOne(bundleConfig, root, outputPaths);
+        if (plan.text) {
+          bundleSpinner.text = `Bundling ${progress}`;
+          output.text = await bundleOne(plan.source, root, ownOutputs);
+        }
+        if (plan.images && !dryRun) {
+          bundleSpinner.text = `Capturing ${progress}`;
+          output.images = await capturer.capture(
+            plan.images.target,
+            (message) => warnings.push(`Bundle "${plan.name}": ${message}`),
+          );
+        }
       } catch (error) {
+        // A dev server that isn't running fails every full run; say how to
+        // keep the bundle without that
+        if (
+          error instanceof ScreenshotError &&
+          error.unreachable &&
+          requestedBundles.length === 0 &&
+          !adHoc
+        ) {
+          error.message += " Set onDemand: true to capture it only when named.";
+        }
         // A config can declare many bundles; the underlying message says what
         // broke but not which bundle asked for it.
         if (
           error instanceof ConfigError ||
           error instanceof GitError ||
-          error instanceof LinearError
+          error instanceof LinearError ||
+          error instanceof ScreenshotError
         ) {
-          error.message = `Bundle "${name}": ${error.message}`;
+          error.message = `Bundle "${plan.name}": ${error.message}`;
         }
         throw error;
       }
-      const outfile = getOutfile(bundleConfig, name, config.outDir);
-      outputs.push({ name, outfile, result });
+      outputs.push(output);
     }
   } finally {
     bundleSpinner.stop();
+    await capturer.close();
+    // Also when a later bundle fails: a page-growth warning may explain it
+    for (const warning of warnings) console.warn(warning);
   }
 
-  // Empty outDir only once every bundle has resolved, and only for a full run:
-  // a named subset can't tell what is stale, so `srcpack web` must not delete
-  // api.txt. Emptying earlier would destroy a good previous run whenever a
-  // later bundle fails — routine once a source is remote, since an expired
-  // token or a rate limit aborts the run after outDir is already gone.
-  // Resolution doesn't need the files removed first: `ownOutputs` already keeps
-  // srcpack's own output from being bundled.
+  // Clear only after all sources resolve, preserving prior output on failure.
+  // Named runs keep other bundles; ad-hoc runs reach this only with an explicit
+  // --emptyOutDir. `ownOutputs` excludes prior output during resolution.
   if (emptyOutDir && !dryRun && requestedBundles.length === 0) {
     await emptyDirectory(outDirPath, [".git"]);
   }
 
+  if (outputs.length === 0) {
+    console.log(onDemandNote);
+    return;
+  }
+
+  const textResults = outputs.flatMap((o) => (o.text ? [o.text] : []));
+
   // Calculate column widths for aligned output
-  const maxNameLen = Math.max(...outputs.map((o) => o.name.length));
+  const maxNameLen = Math.max(...outputs.map((o) => o.plan.name.length));
   const maxFilesLen = Math.max(
-    ...outputs.map((o) => formatNumber(o.result.index.length).length),
+    0,
+    ...textResults.map((text) => formatNumber(text.index.length).length),
   );
   const maxLinesLen = Math.max(
-    ...outputs.map((o) => formatNumber(sumLines(o.result)).length),
+    0,
+    ...textResults.map((text) => formatNumber(sumLines(text)).length),
   );
 
-  // Print each bundle
+  // Print each bundle. A mixed bundle prints its text line, then its images.
   console.log();
-  for (const { name, outfile, result } of outputs) {
-    const fileCount = result.index.length;
-    const lineCount = sumLines(result);
-    const outPath = resolve(root, outfile);
+  for (const { plan, text: result, images } of outputs) {
+    const nameCol = plan.name.padEnd(maxNameLen);
 
-    const nameCol = name.padEnd(maxNameLen);
-    const filesCol = formatNumber(fileCount).padStart(maxFilesLen);
-    const linesCol = formatNumber(lineCount).padStart(maxLinesLen);
+    if (plan.text && result) {
+      const fileCount = result.index.length;
+      const lineCount = sumLines(result);
+      const outPath = plan.text.outfile;
+      const filesCol = formatNumber(fileCount).padStart(maxFilesLen);
+      const linesCol = formatNumber(lineCount).padStart(maxLinesLen);
 
-    if (dryRun) {
-      console.log(
-        `  ${nameCol}  ${filesCol} ${plural(fileCount, "file")}  ${linesCol} ${plural(lineCount, "line")}`,
-      );
-      for (const entry of result.index) {
-        console.log(`    ${entry.path}`);
+      if (dryRun) {
+        console.log(
+          `  ${nameCol}  ${filesCol} ${plural(fileCount, "file")}  ${linesCol} ${plural(lineCount, "line")}`,
+        );
+        for (const entry of result.index) {
+          console.log(`    ${entry.path}`);
+        }
+      } else if (fileCount === 0) {
+        // Remove stale text only inside outDir; custom outfiles outside it survive.
+        if (isInside(outPath, outDirPath)) {
+          await rm(outPath, { force: true });
+        }
+        console.log(
+          `  ${nameCol}  ${filesCol} ${plural(fileCount, "file")}  ${linesCol} ${plural(lineCount, "line")}  → skipped`,
+        );
+      } else {
+        await mkdir(dirname(outPath), { recursive: true });
+        await writeFileAtomic(outPath, result.content);
+        const displayPath = relative(process.cwd(), outPath);
+        console.log(
+          `  ${nameCol}  ${filesCol} ${plural(fileCount, "file")}  ${linesCol} ${plural(lineCount, "line")}  → ${displayPath}`,
+        );
       }
-    } else if (fileCount === 0) {
-      // Drop a previous run's file so the bundle never goes stale, but only
-      // inside outDir — a custom outfile points at a location srcpack doesn't own
-      if (isInside(outPath, outDirPath)) {
-        await rm(outPath, { force: true });
+    }
+
+    if (plan.images) {
+      const { target, dir } = plan.images;
+      if (!images) {
+        const pattern = join(dir, `${plan.name}-NN.png`);
+        console.log(
+          `  ${nameCol}  screenshot  ${target.url}  ${target.viewport}  → ${relative(process.cwd(), pattern)}`,
+        );
+      } else {
+        const written = await writeImages(plan.name, dir, images);
+        const first = relative(process.cwd(), written[0]!);
+        const range =
+          written.length === 1
+            ? first
+            : `${first} … ${basename(written.at(-1)!)}`;
+        console.log(
+          `  ${nameCol}  ${formatNumber(written.length)} ${plural(written.length, "image")}  page ${images.width}×${formatNumber(images.height)}  → ${range}`,
+        );
       }
-      console.log(
-        `  ${nameCol}  ${filesCol} ${plural(fileCount, "file")}  ${linesCol} ${plural(lineCount, "line")}  → skipped`,
-      );
-    } else {
-      await mkdir(dirname(outPath), { recursive: true });
-      await writeBundle(outPath, result.content);
-      const displayPath = relative(process.cwd(), outPath);
-      console.log(
-        `  ${nameCol}  ${filesCol} ${plural(fileCount, "file")}  ${linesCol} ${plural(lineCount, "line")}  → ${displayPath}`,
-      );
     }
   }
 
-  // Print summary
-  const totalFiles = outputs.reduce((sum, o) => sum + o.result.index.length, 0);
-  const totalLines = outputs.reduce((sum, o) => sum + sumLines(o.result), 0);
-  const bundleWord = plural(outputs.length, "bundle");
-  const fileWord = plural(totalFiles, "file");
-  const lineWord = plural(totalLines, "line");
-
   console.log();
   if (dryRun) {
-    console.log(
-      `Dry run: ${outputs.length} ${bundleWord}, ${formatNumber(totalFiles)} ${fileWord}, ${formatNumber(totalLines)} ${lineWord}`,
-    );
+    console.log(`Dry run: ${formatCounts(outputs)}`);
+    if (onDemandNote) console.log(onDemandNote);
   } else {
-    console.log(
-      `Bundled: ${outputs.length} ${bundleWord}, ${formatNumber(totalFiles)} ${fileWord}, ${formatNumber(totalLines)} ${lineWord}`,
-    );
+    console.log(`Bundled: ${formatCounts(outputs)}`);
+    if (onDemandNote) console.log(onDemandNote);
 
     // Ad-hoc bundles stay local: uploading work-in-progress to Drive is not
     // what --staged asks for, and `upload.exclude` can't name a bundle the
     // config doesn't declare. Configure a named bundle to publish changes.
-    if (config.upload && !noUpload && !adHoc) {
+    if (config.upload && upload && !adHoc) {
       const uploads = Array.isArray(config.upload)
         ? config.upload
         : [config.upload];
 
+      // Drive finds files by name and updates them in place, so a page that
+      // shrank would leave its old slices there with nothing to remove them.
+      // A mixed bundle's text file still uploads.
+      const local = outputs.filter((o) => o.images).map((o) => o.plan.name);
+      if (local.length && uploads.some(isGdriveConfigured)) {
+        console.log(`Images stay local: ${local.join(", ")}`);
+      }
+
       for (const uploadConfig of uploads) {
         if (isGdriveConfigured(uploadConfig)) {
-          await handleGdriveUpload(uploadConfig, outputs, root);
+          await handleGdriveUpload(uploadConfig, outputs);
         }
       }
     }
@@ -619,13 +529,14 @@ function printUploadConfigHelp(): void {
 
 async function handleGdriveUpload(
   uploadConfig: UploadConfig,
-  outputs: BundleOutput[],
-  root: string,
+  outputs: ResolvedBundle[],
 ): Promise<void> {
   // Filter out excluded bundles and empty ones (never written to disk)
   const excludeSet = new Set(uploadConfig.exclude ?? []);
-  const toUpload = outputs.filter(
-    (o) => !excludeSet.has(o.name) && o.result.index.length > 0,
+  const toUpload = outputs.flatMap(({ plan, text }) =>
+    plan.text && text && text.index.length > 0 && !excludeSet.has(plan.name)
+      ? [{ name: plan.name, outfile: plan.text.outfile }]
+      : [],
   );
 
   if (toUpload.length === 0) {
@@ -645,10 +556,9 @@ async function handleGdriveUpload(
 
     try {
       for (let i = 0; i < toUpload.length; i++) {
-        const output = toUpload[i]!;
-        const filePath = resolve(root, output.outfile);
-        uploadSpinner.text = `Uploading ${output.name}... (${i + 1}/${toUpload.length})`;
-        const result = await uploadFile(filePath, uploadConfig);
+        const { name, outfile } = toUpload[i]!;
+        uploadSpinner.text = `Uploading ${name}... (${i + 1}/${toUpload.length})`;
+        const result = await uploadFile(outfile, uploadConfig);
         results.push(result);
       }
     } finally {
@@ -681,27 +591,15 @@ async function handleGdriveUpload(
   }
 }
 
-function getOutfile(
-  bundleConfig: BundleConfig,
-  name: string,
-  outDir: string,
-): string {
-  if (
-    typeof bundleConfig === "object" &&
-    !Array.isArray(bundleConfig) &&
-    bundleConfig.outfile
-  ) {
-    return bundleConfig.outfile;
-  }
-  return join(outDir, `${name}.txt`);
-}
-
 main().catch((err) => {
-  // Config, git and Linear failures are user-facing; a stack trace adds noise
+  // Usage, config, git, Linear and screenshot failures are user-facing; a stack
+  // trace adds noise
   console.error(
-    err instanceof ConfigError ||
+    err instanceof UsageError ||
+      err instanceof ConfigError ||
       err instanceof GitError ||
-      err instanceof LinearError
+      err instanceof LinearError ||
+      err instanceof ScreenshotError
       ? err.message
       : err,
   );

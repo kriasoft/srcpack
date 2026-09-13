@@ -77,16 +77,15 @@ describe("parseConfig", () => {
       });
     });
 
-    test("should default index to true for object config", () => {
+    test("should leave index unset when omitted", () => {
+      // Defaulted where it is read, so the schema can tell set from absent
       const config = parseConfig({
         bundles: {
           web: { include: "src/**/*" },
         },
       });
 
-      expect(
-        (config.bundles.web as { include: string; index: boolean }).index,
-      ).toBe(true);
+      expect(config.bundles.web).toEqual({ include: "src/**/*" });
     });
 
     test("should accept multiple bundles with mixed formats", () => {
@@ -426,7 +425,7 @@ describe("parseConfig", () => {
     test("should accept the team shorthand", () => {
       const config = parseConfig({ bundles: { backlog: { linear: "ENG" } } });
 
-      expect(config.bundles.backlog).toEqual({ linear: "ENG", index: true });
+      expect(config.bundles.backlog).toEqual({ linear: "ENG" });
     });
 
     test("should default includeClosed to false", () => {
@@ -513,6 +512,94 @@ describe("parseConfig", () => {
         expect((e as ConfigError).message).toContain("Bundle needs a source");
       }
     });
+  });
+});
+
+describe("screenshot source", () => {
+  const messageOf = (bundles: Record<string, unknown>): string => {
+    try {
+      parseConfig({ bundles });
+    } catch (e) {
+      return (e as ConfigError).message;
+    }
+    throw new Error("should have thrown");
+  };
+
+  test("should accept the URL shorthand and the object form", () => {
+    const config = parseConfig({
+      bundles: {
+        home: { screenshot: "http://localhost:5173/", onDemand: true },
+        phone: {
+          screenshot: {
+            url: "https://example.com/pricing",
+            viewport: "mobile",
+            hide: ["#cookie-banner"],
+          },
+        },
+      },
+    });
+
+    expect(config.bundles.home).toEqual({
+      screenshot: "http://localhost:5173/",
+      onDemand: true,
+    });
+    expect(config.bundles.phone).toMatchObject({
+      screenshot: { viewport: "mobile", hide: ["#cookie-banner"] },
+    });
+  });
+
+  test("should name a missing scheme rather than a bad protocol", () => {
+    // `new URL("localhost:5173")` parses, as protocol `localhost:`
+    expect(messageOf({ home: { screenshot: "localhost:5173" } })).toBe(
+      'bundles.home.screenshot: URL needs a scheme, e.g. "http://localhost:5173/"',
+    );
+    expect(messageOf({ home: { screenshot: { url: "localhost:5173" } } })).toBe(
+      'bundles.home.screenshot.url: URL needs a scheme, e.g. "http://localhost:5173/"',
+    );
+  });
+
+  test("should reject non-http URLs and unknown options", () => {
+    expect(messageOf({ home: { screenshot: "ftp://example.com/" } })).toBe(
+      "bundles.home.screenshot: Expected an http(s) URL",
+    );
+    expect(
+      messageOf({ home: { screenshot: { url: "http://x/", wait: 1 } } }),
+    ).toBe('bundles.home.screenshot: Unrecognized key: "wait"');
+    expect(
+      messageOf({ home: { screenshot: { url: "http://x/", viewport: "tv" } } }),
+    ).toContain("bundles.home.screenshot.viewport");
+  });
+
+  test.each([
+    ["prompt", "Review this."],
+    ["index", false],
+    ["outfile", "home.txt"],
+  ])("should reject %p on a screenshot-only bundle", (key, value) => {
+    expect(
+      messageOf({ home: { screenshot: "http://x/", [key]: value } }),
+    ).toStartWith(`bundles.home.${key}: "${key}" applies to the text file`);
+  });
+
+  test("should accept text options once the bundle also writes text", () => {
+    const config = parseConfig({
+      bundles: {
+        pricing: {
+          include: "src/pages/pricing/**/*",
+          screenshot: "http://localhost:5173/pricing",
+          prompt:
+            "Review this implementation against the attached screenshots.",
+          index: false,
+        },
+      },
+    });
+
+    expect(config.bundles.pricing).toMatchObject({ index: false });
+  });
+
+  test("should still require some source", () => {
+    expect(messageOf({ web: { onDemand: true } })).toContain(
+      '"include" patterns, "linear", or "screenshot"',
+    );
   });
 });
 
