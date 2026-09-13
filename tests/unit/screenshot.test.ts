@@ -327,6 +327,20 @@ describe("watchNetwork", () => {
 
     expect(Date.now() - started).toBeGreaterThanOrEqual(300);
   });
+
+  test("should stop at a shorter limit than the cap", async () => {
+    // Settling passes what is left of its own deadline
+    const events = new EventEmitter();
+    const network = watchNetwork(events, { quiet, cap: 5_000 });
+    events.emit("request", {});
+
+    const started = Date.now();
+    await network.idle(150);
+    const waited = Date.now() - started;
+
+    expect(waited).toBeGreaterThanOrEqual(150);
+    expect(waited).toBeLessThan(1_000);
+  });
 });
 
 describe("packageManager", () => {

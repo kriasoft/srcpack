@@ -230,10 +230,13 @@ export interface Capturer {
 const TIMEOUT = 30_000;
 
 // Settling scrolls one viewport per step, dwelling so observers fire and
-// images start loading at each position. The step cap bounds infinite scroll
-// at ≤5 s of dwell.
+// images start loading at each position, and waits for the network at each
+// apparent bottom. The step cap bounds infinite scroll; the deadline bounds
+// the whole walk, so a page that keeps appending can't turn every step into a
+// network wait.
 const SETTLE_STEPS = 50;
 const SETTLE_DWELL = 100;
+const SETTLE_DEADLINE = 15_000;
 
 // The network counts as idle after 500 ms without a request in flight — the
 // same window as Playwright's `networkidle`. Capped, since uncapped it hangs on
@@ -399,41 +402,58 @@ async function open(page: PlaywrightModule.Page, url: string): Promise<void> {
  * stay blank (playwright#40941).
  *
  * Scrolls until the viewport can go no further, re-reading the page each step
- * so sections that load taller than their placeholders are followed. Then back
- * to the top, and one capped network-idle wait covers both late page data and
- * what scrolling triggered. No explicit font wait: Playwright's screenshot
- * already awaits `document.fonts.ready`.
+ * so sections that load taller than their placeholders are followed. At that
+ * apparent bottom it waits for the network — covering late page data and what
+ * scrolling started — then tries again: a response that appends content has
+ * to be scrolled through too, or its own lazy content is sliced but blank.
+ * The bottom is stable once a wait there brings no growth; only then does it
+ * return to the top. No explicit font wait: Playwright's screenshot already
+ * awaits `document.fonts.ready`.
  */
 async function settle(
   page: PlaywrightModule.Page,
   network: NetworkWatch,
   warn: (message: string) => void,
 ): Promise<void> {
-  let atBottom = false;
-  for (let step = 0; step < SETTLE_STEPS && !atBottom; step++) {
+  const deadline = Date.now() + SETTLE_DEADLINE;
+  let steps = 0;
+  // Whether the network has gone quiet since the last scroll
+  let waitedHere = false;
+  for (;;) {
     // `instant` overrides CSS `scroll-behavior: smooth`, which would leave
     // `scrollY` unchanged when read back and end the walk early
-    atBottom = await page.evaluate<boolean>(`(() => {
+    const moved = await page.evaluate<boolean>(`(() => {
       const before = scrollY;
       scrollTo({ top: before + innerHeight, behavior: "instant" });
-      return scrollY === before;
+      return scrollY !== before;
     })()`);
-    if (!atBottom) await delay(SETTLE_DWELL);
-  }
-  if (!atBottom) {
-    const reached = await page.evaluate<number>("scrollY + innerHeight");
-    warn(
-      `page kept growing while scrolling; content below ${reached.toLocaleString("en-US")} px may not have loaded.`,
-    );
+    if (moved) {
+      waitedHere = false;
+      if (++steps >= SETTLE_STEPS || Date.now() >= deadline) {
+        const reached = await page.evaluate<number>("scrollY + innerHeight");
+        warn(
+          `page kept growing while scrolling; content below ${reached.toLocaleString("en-US")} px may not have loaded.`,
+        );
+        break;
+      }
+      await delay(SETTLE_DWELL);
+    } else if (waitedHere) {
+      break;
+    } else {
+      await network.idle(deadline - Date.now());
+      waitedHere = true;
+    }
   }
 
   await page.evaluate(`scrollTo({ top: 0, behavior: "instant" })`);
-  await network.idle();
 }
 
 export interface NetworkWatch {
-  /** Resolves after `NETWORK_QUIET` ms with nothing in flight, or at the cap. */
-  idle(): Promise<void>;
+  /**
+   * Resolves after the quiet window with nothing in flight, or after `limit`
+   * ms — never longer than the cap.
+   */
+  idle(limit?: number): Promise<void>;
 }
 
 /** The part of a Playwright page that reports requests. */
@@ -470,8 +490,8 @@ export function watchNetwork(
   page.on("requestfailed", settled);
 
   return {
-    async idle() {
-      const deadline = Date.now() + cap;
+    async idle(limit = cap) {
+      const deadline = Date.now() + Math.min(limit, cap);
       while (Date.now() < deadline) {
         if (!inflight.size && Date.now() - lastActivity >= quiet) return;
         await delay(Math.min(50, deadline - Date.now()));

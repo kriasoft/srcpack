@@ -75,9 +75,11 @@ const OVERLAY_PAGE = `
   <style>
     #banner { position: fixed; top: 0; left: 0; right: 0; height: 100px; background: rgb(255, 0, 0) }
     astro-dev-toolbar { display: block; position: fixed; bottom: 0; left: 0; right: 0; height: 100px; background: rgb(0, 0, 255) }
+    nextjs-portal { display: block; position: fixed; top: 400px; left: 0; right: 0; height: 100px; background: rgb(128, 0, 128) }
   </style>
   <div id="banner"></div>
-  <astro-dev-toolbar></astro-dev-toolbar>`;
+  <astro-dev-toolbar></astro-dev-toolbar>
+  <nextjs-portal></nextjs-portal>`;
 
 // The bottom section fetches its color only once scrolled into view, and the
 // server answers slowly: the capture has to wait for the request, not just the
@@ -95,6 +97,29 @@ const LAZY_PAGE = `
     }).observe(lazy);
   </script>`;
 
+// Reaching the bottom starts a slow request whose response appends a tall
+// section, and that section paints itself green only once scrolled into view.
+// Settling has to wait at the bottom and then keep going: growth that lands
+// after it has left is sliced but was never visited.
+const APPENDING_PAGE = `
+  <div style="height: 3000px"></div>
+  <div id="sentinel" style="height: 10px"></div>
+  <script>
+    new IntersectionObserver(async ([entry], observer) => {
+      if (!entry.isIntersecting) return;
+      observer.disconnect();
+      await fetch("/more");
+      const spacer = document.createElement("div");
+      spacer.style.height = "2000px";
+      const last = document.createElement("div");
+      last.style.cssText = "height: 500px; background: rgb(255, 0, 0)";
+      document.body.append(spacer, last);
+      new IntersectionObserver(([entry]) => {
+        if (entry.isIntersecting) last.style.background = "rgb(0, 128, 0)";
+      }).observe(last);
+    }).observe(document.getElementById("sentinel"));
+  </script>`;
+
 let shrinkingHeight = 4000;
 
 const server = Bun.serve({
@@ -103,6 +128,11 @@ const server = Bun.serve({
     switch (new URL(request.url).pathname) {
       case "/lazy":
         return html(LAZY_PAGE);
+      case "/appending":
+        return html(APPENDING_PAGE);
+      case "/more":
+        await Bun.sleep(1000);
+        return new Response("ok");
       case "/lazy-data":
         await Bun.sleep(1500);
         return Response.json({ color: "rgb(0, 128, 0)" });
@@ -256,6 +286,29 @@ describe("screenshot bundles", () => {
   );
 
   test(
+    "should visit content a late response appends at the bottom",
+    async () => {
+      const dir = await project({
+        bundles: { home: { screenshot: `${base}/appending` } },
+      });
+
+      const result = await runCli([], dir);
+
+      expect(result.exitCode).toBe(0);
+      const overview = join(dir, ".srcpack/home-00.png");
+      // 3,010 px as served; 5,510 once the response appended its sections
+      expect(await pngSize(overview)).toEqual([1440, 5510]);
+      expect(await pixelAt(overview, 720, 5260)).toEqual(GREEN);
+      // 1,944 px slices at 0, 1,783 and 3,566: the last section's middle is
+      // at 1,694 in the final one
+      expect(
+        await pixelAt(join(dir, ".srcpack/home-03.png"), 720, 1694),
+      ).toEqual(GREEN);
+    },
+    TIMEOUT,
+  );
+
+  test(
     "should hide overlays and write text and images for a mixed bundle",
     async () => {
       const dir = await project({
@@ -285,6 +338,9 @@ describe("screenshot bundles", () => {
       const image = join(dir, ".srcpack/home-00.png");
       expect(await pixelAt(image, 720, 50)).toEqual(WHITE); // #banner
       expect(await pixelAt(image, 720, 850)).toEqual(WHITE); // dev toolbar
+      // Next's portal also carries its error overlay, so it stays visible
+      // unless listed in `hide`
+      expect(await pixelAt(image, 720, 450)).toEqual([128, 0, 128]);
     },
     TIMEOUT,
   );

@@ -396,7 +396,7 @@ The string form `screenshot: "http://…"` is shorthand for `{ url: "http://…"
 
 ### Notes
 
-- **The page is scrolled before capture**, so lazy images and content that appears on scroll are rendered. Sections that grow as they load are followed down, up to 50 viewports; past that srcpack warns that content further down may not have loaded.
+- **The page is scrolled before capture**, so lazy images and content that appears on scroll are rendered. Sections that grow as they load are followed down, and at the bottom srcpack waits for requests to finish and keeps scrolling if they added content. It stops after 50 viewports or 15 seconds and warns that content further down may not have loaded.
 - **Framework dev toolbars are hidden** automatically (Astro, Nuxt). Next.js is left alone: its `nextjs-portal` also shows build and runtime errors, which a review should see. Add `"nextjs-portal"` to `hide` if you want it gone, and cookie banners and chat widgets too. Hiding happens in the capture's own stylesheet; the page itself isn't changed.
 - **A page that doesn't load fails the run**: an unreachable URL, a non-2xx status, or no response within 30 seconds. A screenshot of a 404 page would look like success. The previous run's images are left untouched.
 - **Stale images are removed.** When a page shrinks from six images to four, `-04` and `-05` are deleted, so an old slice is never attached with the new set.
