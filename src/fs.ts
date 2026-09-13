@@ -4,6 +4,30 @@ import { realpath, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
 
 /**
+ * The key two paths are compared by: canonical spelling, then case folded, on
+ * every platform. A case-insensitive filesystem — the default on macOS and
+ * Windows — treats `Context.txt` and `context.txt` as one directory entry, and
+ * APFS additionally folds Unicode normalisation, so `Café.txt` written as
+ * precomposed U+00E9 and as `e` plus U+0301 is also one entry. Normalising
+ * before folding is what makes the comparison sound: equal inputs stay equal
+ * afterwards whether or not case folding preserves normalisation. `realpath`
+ * resolves an existing component to its on-disk spelling, but that doesn't
+ * cover these: an output not yet written has no on-disk spelling, and the
+ * destination entry is deliberately left unresolved so `rename` replaces a
+ * symlink rather than following it. A config that works in Linux CI and loses
+ * a bundle on the author's laptop is worse than one rejected everywhere, so the
+ * rule is the same on every platform rather than keyed to the filesystem under
+ * it.
+ *
+ * Comparison only. Paths used for I/O keep their original spelling, and
+ * ownership stays an exact match: folding there could only widen what srcpack
+ * deletes, which is the one direction that must never be widened by a guess.
+ */
+export function pathKey(path: string): string {
+  return path.normalize("NFC").toLowerCase();
+}
+
+/**
  * Where a path physically is, with symlinks resolved. Destructive decisions are
  * made on this rather than the lexical path: `.srcpack -> ../shared` is inside
  * the project by name and somewhere else in fact, and it is the somewhere else

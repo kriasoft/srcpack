@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
 
 import { basename, dirname, join, relative, resolve } from "node:path";
-import { pathKey, type BundleResult } from "./bundle.ts";
+import type { BundleResult } from "./bundle.ts";
 import { ConfigError, type BundleConfig } from "./config.ts";
-import { entryPath, physicalPath } from "./fs.ts";
+import { entryPath, pathKey, physicalPath } from "./fs.ts";
 import {
   isImageOf,
   toScreenshotTarget,
-  type CapturedImages,
+  type CapturedPage,
   type ScreenshotTarget,
 } from "./screenshot.ts";
 
@@ -30,7 +30,7 @@ export interface PlannedBundle {
 export interface ResolvedBundle {
   plan: PlannedBundle;
   text?: BundleResult;
-  images?: CapturedImages;
+  images?: CapturedPage;
 }
 
 export interface BundleSelection {

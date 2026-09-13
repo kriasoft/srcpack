@@ -375,9 +375,9 @@ A project that already uses Playwright Test needs nothing new. Without Playwrigh
 | `<name>-00.png`               | The whole page, for layout               |
 | `<name>-01.png`, `-02.png`, … | Overlapping detail slices, top to bottom |
 
-Vision models downscale every image to a fixed pixel budget, so one image of a tall page arrives as a thumbnail. Detail slices are 2,200 device pixels tall and overlap by at least 160, so text cut at one edge is whole in the next. A page that fits in one slice produces only `<name>-00.png`.
+Vision models downscale every image to a fixed pixel budget, so one image of a tall page arrives as a thumbnail. Detail slices are at most 2,200 device pixels tall and overlap by about 160, so text cut at one edge is whole in the next; a page just over one slice becomes two shorter slices rather than two near-copies. A page that fits in one slice produces only `<name>-00.png`.
 
-The overview is best-effort. If a very tall page can't be captured whole, or its image would exceed the 20 MB upload limit, srcpack warns and writes the detail slices alone, starting at `-01`. Those still cover the whole page.
+The overview is best-effort. If a very tall page can't be captured whole, or its image would exceed ChatGPT's 20 MB per-image limit, srcpack warns and writes the detail slices alone, starting at `-01`. Those still cover the whole page.
 
 ### Options
 
@@ -397,7 +397,7 @@ The string form `screenshot: "http://…"` is shorthand for `{ url: "http://…"
 ### Notes
 
 - **The page is scrolled before capture**, so lazy images and content that appears on scroll are rendered. Sections that grow as they load are followed down, up to 50 viewports; past that srcpack warns that content further down may not have loaded.
-- **Framework dev toolbars are hidden** automatically (Astro, Next.js, Nuxt). Add cookie banners and chat widgets to `hide`. Hiding happens in the capture's own stylesheet; the page itself isn't changed.
+- **Framework dev toolbars are hidden** automatically (Astro, Nuxt). Next.js is left alone: its `nextjs-portal` also shows build and runtime errors, which a review should see. Add `"nextjs-portal"` to `hide` if you want it gone, and cookie banners and chat widgets too. Hiding happens in the capture's own stylesheet; the page itself isn't changed.
 - **A page that doesn't load fails the run**: an unreachable URL, a non-2xx status, or no response within 30 seconds. A screenshot of a 404 page would look like success. The previous run's images are left untouched.
 - **Stale images are removed.** When a page shrinks from six images to four, `-04` and `-05` are deleted, so an old slice is never attached with the new set.
 - **Images are written to `outDir`**; there is no `outfile` for them. `prompt`, `index` and `outfile` describe the text file, so they need `include` or `linear` alongside `screenshot`.
@@ -406,6 +406,7 @@ The string form `screenshot: "http://…"` is shorthand for `{ url: "http://…"
 - **`--dry-run` doesn't open the page.** It lists the URL, viewport and destination; how many images a page produces is only known after rendering it.
 - **A page without `<meta name="viewport">`** lays out 980 CSS pixels wide under `mobile`, as it would on a real phone. If a mobile capture looks like the desktop site, that's why.
 - **Two bundles whose names differ only by case** would write one set of files on macOS and Windows, so `Web` and `web` screenshot bundles are rejected everywhere, as is an `outfile` named like another bundle's image.
+- **Virtualized lists and content that disappears once scrolled past** may be missing: the page is scrolled to load content, then captured from the top.
 - **A page that scrolls inside its own container** (the window never scrolls) is captured as a single viewport.
 - **Pages behind a login aren't supported yet.**
 

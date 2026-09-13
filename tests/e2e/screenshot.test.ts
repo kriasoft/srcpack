@@ -79,12 +79,33 @@ const OVERLAY_PAGE = `
   <div id="banner"></div>
   <astro-dev-toolbar></astro-dev-toolbar>`;
 
+// The bottom section fetches its color only once scrolled into view, and the
+// server answers slowly: the capture has to wait for the request, not just the
+// scroll. Red until the response arrives.
+const LAZY_PAGE = `
+  <div style="height: 3000px"></div>
+  <div id="lazy" style="height: 500px; background: rgb(255, 0, 0)"></div>
+  <script>
+    const lazy = document.getElementById("lazy");
+    new IntersectionObserver(async ([entry], observer) => {
+      if (!entry.isIntersecting) return;
+      observer.disconnect();
+      const { color } = await (await fetch("/lazy-data")).json();
+      lazy.style.background = color;
+    }).observe(lazy);
+  </script>`;
+
 let shrinkingHeight = 4000;
 
 const server = Bun.serve({
   port: 0,
-  fetch(request) {
+  async fetch(request) {
     switch (new URL(request.url).pathname) {
+      case "/lazy":
+        return html(LAZY_PAGE);
+      case "/lazy-data":
+        await Bun.sleep(1500);
+        return Response.json({ color: "rgb(0, 128, 0)" });
       case "/tall":
         return html(`<div style="height: 4000px; background: #ddd"></div>`);
       case "/shrinking":
@@ -182,8 +203,9 @@ describe("screenshot bundles", () => {
         "home-02.png",
       ]);
       expect(await pngSize(join(out, "home-00.png"))).toEqual([1440, 4000]);
-      expect(await pngSize(join(out, "home-01.png"))).toEqual([1440, 2200]);
-      expect(await pngSize(join(out, "home-02.png"))).toEqual([1440, 2200]);
+      // Two slices sharing the page with a 160 px overlap, not two full 2,200s
+      expect(await pngSize(join(out, "home-01.png"))).toEqual([1440, 2080]);
+      expect(await pngSize(join(out, "home-02.png"))).toEqual([1440, 2080]);
     },
     TIMEOUT,
   );
@@ -202,11 +224,33 @@ describe("screenshot bundles", () => {
       // 3,500 px as served; 5,500 once the spacer went in
       expect(await pngSize(overview)).toEqual([1440, 5500]);
       expect(await pixelAt(overview, 720, 5250)).toEqual(GREEN);
-      // Details too: slices start at 0, 1,650 and 3,300, so C's middle sits
-      // at 1,950 in the last one. A capture repeating y=0 would show white.
+      // Details too: 1,940 px slices start at 0, 1,780 and 3,560, so C's
+      // middle sits at 1,690 in the last. A capture repeating y=0 shows white.
       const last = join(dir, ".srcpack/home-03.png");
-      expect(await pngSize(last)).toEqual([1440, 2200]);
-      expect(await pixelAt(last, 720, 1950)).toEqual(GREEN);
+      expect(await pngSize(last)).toEqual([1440, 1940]);
+      expect(await pixelAt(last, 720, 1690)).toEqual(GREEN);
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "should wait for data a scrolled-to section requests",
+    async () => {
+      const dir = await project({
+        bundles: { home: { screenshot: `${base}/lazy` } },
+      });
+
+      const result = await runCli([], dir);
+
+      expect(result.exitCode).toBe(0);
+      // 3,500 px page: 1,830 px slices at 0 and 1,670. The response lands
+      // well after scrolling ends, so only the network wait makes it green.
+      expect(
+        await pixelAt(join(dir, ".srcpack/home-02.png"), 720, 1580),
+      ).toEqual(GREEN);
+      expect(
+        await pixelAt(join(dir, ".srcpack/home-00.png"), 720, 3250),
+      ).toEqual(GREEN);
     },
     TIMEOUT,
   );

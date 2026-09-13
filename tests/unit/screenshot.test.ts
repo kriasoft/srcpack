@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { EventEmitter } from "node:events";
-import { pathKey } from "../../src/bundle.ts";
+import { pathKey } from "../../src/fs.ts";
 import {
   imageFileName,
   isImageOf,
@@ -64,9 +64,31 @@ describe("planSlices", () => {
     // DPR 2 doubles pixel dimensions, so a slice covers half as much page
     expect(planSlices(1100, 2)).toEqual([{ y: 0, height: 1100 }]);
     expect(planSlices(1101, 2)).toEqual([
-      { y: 0, height: 1100 },
-      { y: 1, height: 1100 },
+      { y: 0, height: 591 },
+      { y: 510, height: 591 },
     ]);
+  });
+
+  test("should shrink slices to share the page instead of duplicating it", () => {
+    // Two near-identical 2,200 px images would each cost a model's attention
+    expect(planSlices(2201, 1)).toEqual([
+      { y: 0, height: 1181 },
+      { y: 1020, height: 1181 },
+    ]);
+    for (const [height, dpr] of [
+      [2201, 1],
+      [4000, 1],
+      [9480, 2],
+      [45_000, 1],
+    ] as const) {
+      const slices = planSlices(height, dpr);
+      for (let i = 1; i < slices.length; i++) {
+        const overlap = slices[i - 1]!.y + slices[i - 1]!.height - slices[i]!.y;
+        // Rounding to whole pixels adds at most a couple
+        expect(overlap).toBeLessThanOrEqual(160 / dpr + 3);
+      }
+      expect(slices[0]!.height).toBeLessThanOrEqual(2200 / dpr);
+    }
   });
 });
 
@@ -233,10 +255,28 @@ describe("launchBrowser", () => {
   });
 
   test("should print the install command when neither is available", async () => {
-    const pw = fakeChromium({ bundled: missing, chrome: missing });
+    const pw = fakeChromium({
+      bundled: missing,
+      chrome: () => {
+        throw new Error(
+          "browserType.launch: Chromium distribution 'chrome' is not found at /opt/google/chrome/chrome",
+        );
+      },
+    });
     await expect(launchBrowser(pw, "pnpm/9.0.0")).rejects.toThrow(
       "screenshots need a browser. Install Chromium with:\n  pnpm exec playwright install chromium",
     );
+  });
+
+  test("should rethrow a system Chrome that exists but fails to start", async () => {
+    // "Install Chromium" would send the user after the wrong problem
+    const pw = fakeChromium({
+      bundled: missing,
+      chrome: () => {
+        throw new Error("browserType.launch: Target crashed (sandbox)");
+      },
+    });
+    await expect(launchBrowser(pw)).rejects.toThrow("Target crashed");
   });
 
   test("should rethrow a launch failure that isn't a missing browser", async () => {

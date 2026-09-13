@@ -29,7 +29,7 @@ import {
   imageFileName,
   isImageOf,
   ScreenshotError,
-  type CapturedImages,
+  type CapturedPage,
 } from "./screenshot.ts";
 
 function sumLines(result: BundleResult): number {
@@ -105,7 +105,7 @@ async function emptyDirectory(dir: string, skip: string[] = []): Promise<void> {
 async function writeImages(
   name: string,
   dir: string,
-  captured: CapturedImages,
+  captured: CapturedPage,
 ): Promise<string[]> {
   await mkdir(dir, { recursive: true });
   const highest = Math.max(...captured.images.map((image) => image.index));

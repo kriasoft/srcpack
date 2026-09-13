@@ -1,6 +1,6 @@
 {
   "name": "srcpack",
-  "version": "0.3.0",
+  "version": "1.0.0",
   "description": "Zero-config CLI for bundling code into LLM-optimized context files",
   "keywords": [
     "llm",
@@ -88,7 +88,7 @@
     "zod": "^4.4.3"
   },
   "peerDependencies": {
-    "playwright": ">=1.41 <2"
+    "playwright": "*"
   },
   "peerDependenciesMeta": {
     "playwright": {

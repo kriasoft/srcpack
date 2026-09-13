@@ -38,10 +38,11 @@ export function toScreenshotTarget(source: ScreenshotSource): ScreenshotTarget {
 }
 
 // Vision models downscale every image to a fixed pixel budget, so a tall page
-// captured whole reaches them as a thumbnail. Detail slices stay near that
-// budget: 2,200 device px tall, overlapping by 160 so a line of text cut by one
-// boundary is whole in the neighbouring slice. In device px, not CSS px, so a
-// DPR 2 capture covers half the page height per slice at the same image size.
+// captured whole reaches them as a thumbnail. Detail slices stay within that
+// budget: at most 2,200 device px tall, overlapping by about 160 so a line of
+// text cut by one boundary is whole in the neighbouring slice. In device px,
+// not CSS px, so a DPR 2 capture covers half the page height per slice at the
+// same image size.
 const SLICE_HEIGHT = 2200;
 const SLICE_OVERLAP = 160;
 
@@ -52,19 +53,25 @@ export interface Slice {
 }
 
 /**
- * Split a page into overlapping slices that cover it top to bottom. Starts are
- * spread evenly so the last slice ends flush with the bottom, and each overlap
- * is at least `SLICE_OVERLAP` device px.
+ * Split a page into the fewest overlapping slices that cover it top to bottom,
+ * each overlapping the next by at least `SLICE_OVERLAP` device px.
+ *
+ * Slices then shrink to share the page evenly rather than staying at the
+ * maximum: a page one pixel taller than a slice becomes two half-page slices,
+ * not two near-identical full ones that spend a model's attention twice.
  */
 export function planSlices(cssHeight: number, dpr: number): Slice[] {
-  const height = SLICE_HEIGHT / dpr;
+  const maxHeight = SLICE_HEIGHT / dpr;
   const overlap = SLICE_OVERLAP / dpr;
-  if (cssHeight <= height) return [{ y: 0, height: cssHeight }];
+  if (cssHeight <= maxHeight) return [{ y: 0, height: cssHeight }];
 
-  const count = Math.ceil((cssHeight - overlap) / (height - overlap));
+  const count = Math.ceil((cssHeight - overlap) / (maxHeight - overlap));
+  // Exactly `overlap` between neighbours at this height; rounded up to whole
+  // CSS px, which only adds overlap, and never past `maxHeight` given `count`
+  const height = Math.ceil((cssHeight + (count - 1) * overlap) / count);
   const step = (cssHeight - height) / (count - 1);
-  // Floored to whole CSS px, which never widens a gap past `height - overlap`.
-  // The last start is set, not computed: `i * step` can round below the exact
+  // Starts are floored, which never widens a gap past `height - overlap`. The
+  // last start is set, not computed: `i * step` can round below the exact
   // value and leave the bottom row uncovered.
   return Array.from({ length: count }, (_, i) => ({
     y: i === count - 1 ? cssHeight - height : Math.floor(i * step),
@@ -124,8 +131,8 @@ function candidates(root: string): [Require, string][] {
 }
 
 // 1.41 added the screenshot `style` option, which hides elements without
-// mutating the page. Checked at load: the peer range constrains nothing when
-// the copy comes from the project rather than srcpack's own install.
+// mutating the page. Checked here rather than in the peer range, which is `*`
+// so installs that never capture aren't judged by their Playwright version.
 const MIN_MINOR = 41;
 
 /**
@@ -175,13 +182,13 @@ export async function launchBrowser(
   try {
     return await playwright.chromium.launch();
   } catch (error) {
-    if (!/Executable doesn't exist/i.test((error as Error).message)) {
-      throw error;
-    }
+    if (!isMissingBrowser(error)) throw error;
   }
   try {
     return await playwright.chromium.launch({ channel: "chrome" });
-  } catch {
+  } catch (error) {
+    // Chrome that exists but fails to start has a real reason worth showing
+    if (!isMissingBrowser(error)) throw error;
     const pm = packageManager(userAgent);
     throw new ScreenshotError(
       `screenshots need a browser. Install Chromium with:\n  ${pm.exec} playwright install chromium`,
@@ -189,8 +196,15 @@ export async function launchBrowser(
   }
 }
 
+/** Playwright's wording for a bundled build, then for a system channel. */
+function isMissingBrowser(error: unknown): boolean {
+  return /Executable doesn't exist|distribution '[^']+' is not found/.test(
+    (error as Error).message,
+  );
+}
+
 /** What a capture produced. Dimensions are the page's, in CSS px. */
-export interface CapturedImages {
+export interface CapturedPage {
   width: number;
   height: number;
   /**
@@ -206,7 +220,7 @@ export interface Capturer {
   capture(
     target: ScreenshotTarget,
     warn: (message: string) => void,
-  ): Promise<CapturedImages>;
+  ): Promise<CapturedPage>;
   /** Close the browser, if one was launched. Never throws. */
   close(): Promise<void>;
 }
@@ -228,14 +242,12 @@ const NETWORK_QUIET = 500;
 const NETWORK_IDLE = 5_000;
 
 // OpenAI's documented per-image upload limit
-const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
+const CHATGPT_MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 
-// Framework dev chrome that would otherwise be reviewed as part of the design
-const DEV_OVERLAYS = [
-  "astro-dev-toolbar",
-  "nextjs-portal",
-  "nuxt-devtools-container",
-];
+// Framework dev chrome that would otherwise be reviewed as part of the design.
+// Not `nextjs-portal`: it also hosts Next's build and runtime error overlay,
+// and a clean page over a broken app is worse evidence than a noisy one.
+const DEV_OVERLAYS = ["astro-dev-toolbar", "nuxt-devtools-container"];
 
 /** `net::` codes that mean nothing is listening, not that the page is broken. */
 const UNREACHABLE: Record<string, string> = {
@@ -298,7 +310,7 @@ async function capturePage(
   page: PlaywrightModule.Page,
   target: ScreenshotTarget,
   warn: (message: string) => void,
-): Promise<CapturedImages> {
+): Promise<CapturedPage> {
   page.setDefaultTimeout(TIMEOUT);
   const network = watchNetwork(page);
   await open(page, target.url);
@@ -331,7 +343,7 @@ async function capturePage(
   } as const;
 
   const slices = planSlices(height, dpr);
-  const images: CapturedImages["images"] = [];
+  const images: CapturedPage["images"] = [];
   for (const [i, { y, height: sliceHeight }] of slices.entries()) {
     const data = await page.screenshot({
       ...options,
@@ -487,9 +499,9 @@ async function captureOverview(
     );
     return undefined;
   }
-  if (data.byteLength > MAX_IMAGE_BYTES) {
+  if (data.byteLength > CHATGPT_MAX_IMAGE_BYTES) {
     warn(
-      `skipped the whole-page overview: ${Math.ceil(data.byteLength / 1024 / 1024)} MB is over the 20 MB per-image upload limit. Detail slices are complete.`,
+      `skipped the whole-page overview: ${Math.ceil(data.byteLength / 1024 / 1024)} MB is over ChatGPT's 20 MB per-image limit. Detail slices are complete.`,
     );
     return undefined;
   }
